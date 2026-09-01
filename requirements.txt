@@ -1,0 +1,11 @@
+# Core ML
+scikit-learn==1.6.1
+numpy>=1.24
+joblib>=1.3
+
+# API
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
+# Testing
+pytest>=7.0
