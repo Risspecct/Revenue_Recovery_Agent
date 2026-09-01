@@ -8,7 +8,9 @@ domain-specific signals that the rule modules know how to interpret.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -129,3 +131,56 @@ class DecisionResult:
             "guardrail_status":     self.guardrail_status.value,
             "revenue_reasoning":    self.revenue_reasoning,
         }
+
+
+# ---------------------------------------------------------------------------
+# Execution schemas
+# ---------------------------------------------------------------------------
+
+class ExecutionStatus(str, Enum):
+    """
+    EXECUTED — the bounded action was simulated successfully.
+    SKIPPED  — the action was NO_ACTION; no intervention was warranted.
+    REJECTED — the decision was BLOCKED or the action is unsupported;
+               the executor refused to act.
+    """
+    EXECUTED = "EXECUTED"
+    SKIPPED  = "SKIPPED"
+    REJECTED = "REJECTED"
+
+
+@dataclass
+class ExecutionResult:
+    """
+    Structured result produced by the executor for every execute() call.
+
+    All executions are simulations.  'simulated=True' is always set.
+    The executor never claims a payment was processed, an invoice was paid,
+    or that revenue was recovered.
+    """
+    execution_id: str
+    case_id:      str
+    action:       Intervention
+    status:       ExecutionStatus
+    message:      str
+    simulated:    bool
+    timestamp:    str              # ISO-8601 UTC
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution_id": self.execution_id,
+            "case_id":      self.case_id,
+            "action":       self.action.value,
+            "status":       self.status.value,
+            "message":      self.message,
+            "simulated":    self.simulated,
+            "timestamp":    self.timestamp,
+        }
+
+    @staticmethod
+    def make_id() -> str:
+        return f"exec_{uuid.uuid4().hex[:16]}"
+
+    @staticmethod
+    def utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()

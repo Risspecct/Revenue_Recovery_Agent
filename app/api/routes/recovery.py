@@ -1,8 +1,9 @@
 """
 Recovery API routes.
 
-Endpoint:
+Endpoints:
   POST /api/recovery/evaluate   — evaluate a single revenue-risk case
+  POST /api/recovery/execute    — evaluate and execute the approved action
 
 The route delegates all business logic to the recovery service.
 It is responsible only for HTTP concerns: request parsing, error mapping,
@@ -13,8 +14,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.models import EvaluateRequest, EvaluateResponse
-from app.services.recovery_service import evaluate
+from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse
+from app.services.recovery_service import evaluate, evaluate_and_execute
 
 router = APIRouter(tags=["recovery"])
 
@@ -44,4 +45,28 @@ async def evaluate_case(request: EvaluateRequest) -> EvaluateResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Decision engine error: {type(exc).__name__}: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/execute",
+    response_model=ExecuteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Evaluate and execute a bounded simulated recovery action",
+    description=(
+        "Submit a recovery case, receive the decision, and then execute only the "
+        "approved action through the bounded simulation layer."
+    ),
+)
+async def execute_case(request: EvaluateRequest) -> ExecuteResponse:
+    """
+    Evaluate a recovery case and execute the approved action via the bounded
+    executor. The decision engine remains authoritative.
+    """
+    try:
+        return evaluate_and_execute(request)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Execution engine error: {type(exc).__name__}: {exc}",
         ) from exc

@@ -107,6 +107,18 @@ class EvaluateResponse(BaseModel):
     model_config = {"use_enum_values": True}
 
 
+class ExecuteResponse(BaseModel):
+    """
+    HTTP response body for POST /api/recovery/execute.
+
+    The decision is returned in full, and the execution result contains the
+    bounded simulated intervention output.
+    """
+
+    decision: EvaluateResponse
+    execution: dict[str, Any] = Field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Health response
 # ---------------------------------------------------------------------------
