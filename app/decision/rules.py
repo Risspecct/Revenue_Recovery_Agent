@@ -16,10 +16,12 @@ from app.models.checkout_recovery import score_checkout_case
 # Payment failure rules
 # ===========================================================================
 
-# Failure codes that are worth retrying automatically.
+# Failure codes that are worth retrying automatically (non-empty reasons).
+# Whether an empty/missing failure_reason is also treated as retryable is
+# controlled by THRESHOLDS["empty_failure_reason_retryable"].
 _RETRYABLE_FAILURES = {
     "network_error", "timeout", "bank_unavailable",
-    "temporary_failure", "unknown", "",
+    "temporary_failure", "unknown",
 }
 
 # Failure codes that suggest a different payment method is needed.
@@ -51,7 +53,9 @@ def decide_payment(case: RecoveryCase) -> tuple[Intervention, str, float]:
             1.0,
         )
 
-    retryable = failure_raw in _RETRYABLE_FAILURES
+    # Determine retryability, honouring the configurable empty-reason flag.
+    empty_retryable = bool(THRESHOLDS.get("empty_failure_reason_retryable", True))
+    retryable = failure_raw in _RETRYABLE_FAILURES or (failure_raw == "" and empty_retryable)
     exhausted  = retry_count >= max_retries
 
     if retryable and not exhausted:
@@ -113,24 +117,26 @@ def decide_payment(case: RecoveryCase) -> tuple[Intervention, str, float]:
 # Checkout abandonment rules
 # ===========================================================================
 
-def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
+def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float, float]:
     """
     Checkout-abandonment decision rules.
 
-    Uses the trained Random Forest (via app.models.checkout_recovery) as a
-    propensity signal when session features are present; otherwise falls back
-    to the manually supplied recovery_probability.
+    Returns (action, reason, confidence, effective_recovery_probability).
+
+    Uses the trained Random Forest as a propensity signal when all session
+    features are present; otherwise falls back to the supplied
+    recovery_probability on the case.  The model score is NOT written back
+    to the case — the caller receives it via the returned tuple.
 
     The RF score is a PRIORITIZATION signal, NOT a causal intervention-lift.
     """
     ctx    = case.context
     amount = case.revenue_at_risk
 
+    # Use model score if available; fall back to caller-supplied value.
+    # Do NOT mutate case.recovery_probability.
     model_prob = score_checkout_case(ctx)
-    if model_prob is not None:
-        case.recovery_probability = model_prob
-
-    prob = case.recovery_probability
+    prob = model_prob if model_prob is not None else case.recovery_probability
 
     low_value      = THRESHOLDS["checkout_low_value"]
     high_value     = THRESHOLDS["checkout_high_value"]
@@ -143,6 +149,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             Intervention.NO_ACTION,
             "Checkout has already been recovered; no further intervention needed.",
             1.0,
+            prob,
         )
 
     if ctx.get("intervention_already_sent", False):
@@ -150,6 +157,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             Intervention.NO_ACTION,
             "An intervention has already been sent for this abandoned session.",
             0.90,
+            prob,
         )
 
     if prob < low_propensity and amount < low_value:
@@ -158,6 +166,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             f"Recovery propensity ({prob:.2f}) and cart value ({amount}) are "
             "both below minimum thresholds. Intervention not cost-effective.",
             0.70,
+            prob,
         )
 
     if (
@@ -170,6 +179,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             f"Cart value ({amount}) and recovery propensity ({prob:.2f}) meet "
             "incentive thresholds, and customer is marked incentive-eligible.",
             prob,
+            prob,
         )
 
     if amount >= high_value:
@@ -178,12 +188,14 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             f"High-value abandoned cart ({amount}). Reminder dispatched "
             f"regardless of propensity ({prob:.2f}).",
             max(prob, 0.55),
+            prob,
         )
 
     if prob >= THRESHOLDS["propensity_high"]:
         return (
             Intervention.CHECKOUT_REMINDER,
             f"High recovery propensity ({prob:.2f}) warrants a checkout reminder.",
+            prob,
             prob,
         )
 
@@ -193,6 +205,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
             f"Moderate cart value ({amount}) or propensity ({prob:.2f}). "
             "Sending a low-friction checkout reminder.",
             max(prob, 0.35),
+            prob,
         )
 
     return (
@@ -200,6 +213,7 @@ def decide_checkout(case: RecoveryCase) -> tuple[Intervention, str, float]:
         f"Cart value ({amount}) and recovery propensity ({prob:.2f}) do not "
         "meet any intervention threshold.",
         0.65,
+        prob,
     )
 
 

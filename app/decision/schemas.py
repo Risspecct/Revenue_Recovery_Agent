@@ -40,8 +40,17 @@ class Priority(str, Enum):
 
 
 class GuardrailStatus(str, Enum):
-    APPROVED = "APPROVED"
-    BLOCKED  = "BLOCKED"
+    """
+    APPROVED  — the recommended action passed all guardrail checks.
+    BLOCKED   — the action was blocked and no safe replacement was available;
+                the result is NO_ACTION.
+    ESCALATED — the final action is ESCALATE because the decision path
+                intentionally escalated the case (either via a domain rule
+                or as a guardrail-triggered fallback for high-value cases).
+    """
+    APPROVED  = "APPROVED"
+    BLOCKED   = "BLOCKED"
+    ESCALATED = "ESCALATED"
 
 
 # ---------------------------------------------------------------------------

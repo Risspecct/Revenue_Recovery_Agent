@@ -43,4 +43,10 @@ THRESHOLDS: dict = {
     "receivable_escalate_days":        60,
     "receivable_high_value_days":      30,
     "receivable_reminder_cooldown":     7,
+
+    # Payment — empty/missing failure_reason handling.
+    # When True, a payment with no failure_reason is treated as retryable
+    # (optimistic retry assumption). Set to False to treat unknown failures
+    # as non-retryable instead.
+    "empty_failure_reason_retryable": True,
 }

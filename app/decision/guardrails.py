@@ -9,7 +9,7 @@ validate_decision() which short-circuits on the first failure.
 from __future__ import annotations
 
 from app.decision.schemas import CaseType, GuardrailStatus, Intervention, RecoveryCase
-from app.decision._catalogue import THRESHOLDS
+from app.decision._catalogue import CATALOGUE, THRESHOLDS
 
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,7 @@ from app.decision._catalogue import THRESHOLDS
 # ---------------------------------------------------------------------------
 
 def _check_in_catalogue(action: Intervention) -> tuple[bool, str]:
-    if action not in frozenset(Intervention):
+    if action not in CATALOGUE:
         return False, f"Action '{action}' is not in the permitted intervention catalogue."
     return True, ""
 

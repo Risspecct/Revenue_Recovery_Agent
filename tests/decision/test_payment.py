@@ -36,7 +36,7 @@ def test_already_succeeded_no_action():
 def test_retry_limit_high_value_escalate():
     result = decide(_make("pay_003", 7_000.0, failure_reason="network_error", retry_count=3))
     assert result.recommended_action == Intervention.ESCALATE
-    assert result.guardrail_status   == GuardrailStatus.APPROVED
+    assert result.guardrail_status   == GuardrailStatus.ESCALATED
 
 
 def test_retry_limit_low_value_alternate():
