@@ -25,22 +25,44 @@ def test_score_returns_none_for_partial_features():
 
 
 def test_score_returns_float_for_complete_features():
+
     complete = {
-        "cart_additions":   3,
-        "views":           12,
-        "unique_products":  4,
-        "event_count":     25,
+        "cart_additions": 3,
+        "views": 12,
+        "unique_products": 4,
+        "event_count": 25,
         "duration_minutes": 8.5,
-        "hour_of_day":     14,
-        "day_of_week":      2,
+        "hour_of_day": 14,
+        "day_of_week": 2,
     }
+
     result = score_checkout_case(complete)
     # Model may fail due to sklearn version mismatch — function returns None gracefully
+
     if result is not None:
         assert 0.0 <= result <= 1.0
 
 
 def test_model_features_contract():
     assert len(MODEL_FEATURES) == 7
-    assert "cart_additions"    in MODEL_FEATURES
-    assert "duration_minutes"  in MODEL_FEATURES
+    assert "cart_additions" in MODEL_FEATURES
+    assert "duration_minutes" in MODEL_FEATURES
+
+
+def test_score_returns_probability_for_complete_features():
+
+    complete = {
+        "cart_additions": 3,
+        "views": 12,
+        "unique_products": 4,
+        "event_count": 25,
+        "duration_minutes": 8.5,
+        "hour_of_day": 14,
+        "day_of_week": 2,
+    }
+
+    result = score_checkout_case(complete)
+
+    assert result is not None
+    assert isinstance(result, float)
+    assert 0.0 <= result <= 1.0
