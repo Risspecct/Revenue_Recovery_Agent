@@ -17,7 +17,7 @@ IMPORTANT: the score is a propensity / prioritization signal.
 
 from __future__ import annotations
 
-import pickle
+import joblib
 import warnings
 from typing import Any
 
@@ -46,7 +46,7 @@ def _load_model():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")   # suppress sklearn version-mismatch warning
         with open(CHECKOUT_MODEL_PATH, "rb") as f:
-            _model = pickle.load(f)
+            _model = joblib.load(f)
     return _model
 
 
