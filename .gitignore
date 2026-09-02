@@ -37,5 +37,5 @@ htmlcov/
 Thumbs.db
 
 # Data (large files — do not commit raw data unless small)
-# data/raw/
-# data/processed/
+data/raw/
+data/processed/
