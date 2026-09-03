@@ -22,6 +22,10 @@ from app.models.checkout_recovery import score_checkout_cases
 from app.services.o2c_adapter import build_o2c_case
 
 
+_latest_scan: RevenueScanResult | None = None
+_latest_cases: dict[str, RecoveryCase] = {}
+
+
 @dataclass
 class RevenueScanResult:
     scan_id: str
@@ -234,8 +238,22 @@ def scan_revenue_risk(
         for result in evaluated
         if result.case_id not in selected_ids and len(queue) < max_cases
     )
-    return RevenueScanResult(
+    result = RevenueScanResult(
         scan_id=f"scan_{uuid.uuid4().hex[:16]}",
         cases=queue,
         total_revenue_at_risk=sum(result.revenue_at_risk for result in queue),
     )
+    global _latest_scan, _latest_cases
+    _latest_scan = result
+    _latest_cases = {case.case_id: unique_cases[case.case_id] for case in queue}
+    return result
+
+
+def get_latest_scan() -> RevenueScanResult | None:
+    """Return the current in-memory work queue, if a scan has run."""
+    return _latest_scan
+
+
+def get_case(case_id: str) -> RecoveryCase | None:
+    """Return the original case for a case-ID execution request."""
+    return _latest_cases.get(case_id)

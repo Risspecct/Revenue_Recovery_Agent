@@ -18,6 +18,7 @@ from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse
 from app.decision import engine as decision_engine
 from app.decision.schemas import DecisionResult, RecoveryCase
 from app.execution.executor import execute
+from app.services.revenue_scanner import get_case
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,19 @@ def evaluate_and_execute(request: EvaluateRequest) -> ExecuteResponse:
     decision = decision_engine.decide(_build_case(request))
     execution = execute(decision)
 
+    return ExecuteResponse(
+        decision=_to_evaluate_response(decision),
+        execution=execution.to_dict(),
+    )
+
+
+def execute_cached_case(case_id: str) -> ExecuteResponse | None:
+    """Execute a case retained by the latest in-memory revenue scan."""
+    case = get_case(case_id)
+    if case is None:
+        return None
+    decision = decision_engine.decide(case)
+    execution = execute(decision)
     return ExecuteResponse(
         decision=_to_evaluate_response(decision),
         execution=execution.to_dict(),

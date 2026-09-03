@@ -15,8 +15,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse, ScanResponse
-from app.services.recovery_service import evaluate, evaluate_and_execute
-from app.services.revenue_scanner import scan_revenue_risk
+from app.services.recovery_service import evaluate, evaluate_and_execute, execute_cached_case
+from app.services.revenue_scanner import get_latest_scan, scan_revenue_risk
 
 router = APIRouter(tags=["recovery"])
 
@@ -38,6 +38,21 @@ async def scan_cases() -> ScanResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Revenue scan error: {type(exc).__name__}: {exc}",
         ) from exc
+
+
+@router.get("/cases", response_model=ScanResponse, status_code=status.HTTP_200_OK)
+async def get_cases() -> ScanResponse:
+    """Return the latest in-memory work queue."""
+    result = get_latest_scan()
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No revenue scan has run.")
+    return ScanResponse(
+        scan_id=result.scan_id,
+        cases_detected=result.cases_detected,
+        total_revenue_at_risk=result.total_revenue_at_risk,
+        actions_recommended=result.actions_recommended,
+        cases=[EvaluateResponse(**case.to_dict()) for case in result.cases],
+    )
 
 
 @router.post(
@@ -85,6 +100,28 @@ async def execute_case(request: EvaluateRequest) -> ExecuteResponse:
     """
     try:
         return evaluate_and_execute(request)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Execution engine error: {type(exc).__name__}: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/execute/{case_id}",
+    response_model=ExecuteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Execute a scanned recovery case",
+)
+async def execute_scanned_case(case_id: str) -> ExecuteResponse:
+    """Execute the selected case from the latest in-memory work queue."""
+    try:
+        result = execute_cached_case(case_id)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found in latest scan.")
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
