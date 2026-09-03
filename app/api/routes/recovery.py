@@ -14,10 +14,30 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse
+from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse, ScanResponse
 from app.services.recovery_service import evaluate, evaluate_and_execute
+from app.services.revenue_scanner import scan_revenue_risk
 
 router = APIRouter(tags=["recovery"])
+
+
+@router.post("/scan", response_model=ScanResponse, status_code=status.HTTP_200_OK)
+async def scan_cases() -> ScanResponse:
+    """Scan prepared data sources and populate the in-memory work queue."""
+    try:
+        result = scan_revenue_risk()
+        return ScanResponse(
+            scan_id=result.scan_id,
+            cases_detected=result.cases_detected,
+            total_revenue_at_risk=result.total_revenue_at_risk,
+            actions_recommended=result.actions_recommended,
+            cases=[EvaluateResponse(**case.to_dict()) for case in result.cases],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Revenue scan error: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @router.post(

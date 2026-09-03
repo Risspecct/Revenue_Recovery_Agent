@@ -32,6 +32,7 @@ FEATURE_SCALER_PATH: Path = ML_ARTIFACTS_DIR / "feature_scaler.pkl"
 # ---------------------------------------------------------------------------
 
 DATA_DIR: Path = REPO_ROOT / "data"
+PREPARED_DATA_DIR: Path = DATA_DIR / "prepared"
 
 RAW_CHECKOUT_DIR:       Path = DATA_DIR / "raw"  / "checkout"
 RAW_PAYMENT_DIR:        Path = DATA_DIR / "raw"  / "payment"

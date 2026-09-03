@@ -22,6 +22,7 @@ import warnings
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from app.config.settings import CHECKOUT_MODEL_PATH
 
@@ -71,5 +72,20 @@ def score_checkout_case(context: dict[str, Any]) -> float | None:
         model = _load_model()
         row   = np.array([[context[k] for k in MODEL_FEATURES]], dtype=float)
         return float(model.predict_proba(row)[0, 1])
+    except Exception:
+        return None
+
+
+def score_checkout_cases(contexts: list[dict[str, Any]]) -> list[float] | None:
+    """Return propensity scores for prepared sessions in one model call."""
+    if not contexts or not all(all(key in context for key in MODEL_FEATURES) for context in contexts):
+        return None
+    try:
+        model = _load_model()
+        rows = pd.DataFrame(
+            [[context[key] for key in MODEL_FEATURES] for context in contexts],
+            columns=MODEL_FEATURES,
+        )
+        return [round(float(value), 6) for value in model.predict_proba(rows)[:, 1]]
     except Exception:
         return None

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
-from app.decision.schemas import CaseType, GuardrailStatus, Intervention, Priority
+from app.decision.schemas import CaseType, Intervention
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +117,14 @@ class ExecuteResponse(BaseModel):
 
     decision: EvaluateResponse
     execution: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScanResponse(BaseModel):
+    scan_id: str
+    cases_detected: int
+    total_revenue_at_risk: float
+    actions_recommended: int
+    cases: list[EvaluateResponse]
 
 
 # ---------------------------------------------------------------------------
