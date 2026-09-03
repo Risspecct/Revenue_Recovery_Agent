@@ -16,7 +16,7 @@ from __future__ import annotations
 import joblib
 import warnings
 from typing import Any
-
+import numpy as np
 import pandas as pd
 
 from app.config.settings import O2C_MODEL_PATH
@@ -77,6 +77,32 @@ def score_o2c_case(context: dict[str, Any]) -> float | None:
         )
 
         return round(float(model.predict_proba(row)[0, 1]), 6)
+
+    except Exception:
+        return None
+
+
+def score_o2c_cases(
+    features: pd.DataFrame,
+) -> np.ndarray | None:
+    """
+    Return P(late_payment) for multiple invoices in one batch.
+
+    The DataFrame must contain all MODEL_FEATURES columns.
+    Returns None if required features are missing or inference fails.
+    """
+
+    if not all(k in features.columns for k in MODEL_FEATURES):
+        return None
+
+    try:
+        model = _load_model()
+
+        row = features[MODEL_FEATURES].copy()
+
+        probabilities = model.predict_proba(row)[:, 1]
+
+        return np.round(probabilities.astype(float), 6)
 
     except Exception:
         return None
