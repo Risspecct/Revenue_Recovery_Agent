@@ -23,6 +23,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]  # app/config/ → repo ro
 ML_ARTIFACTS_DIR: Path = REPO_ROOT / "ml" / "checkout" / "artifacts"
 
 CHECKOUT_MODEL_PATH: Path = ML_ARTIFACTS_DIR / "selected_recovery_model.pkl"
+O2C_MODEL_PATH: Path = (REPO_ROOT / "ml" / "o2c" / "artifacts" / "selected_o2c_late_payment_model.pkl")
 BASELINE_MODEL_PATH: Path = ML_ARTIFACTS_DIR / "baseline_recovery_model.pkl"
 FEATURE_SCALER_PATH: Path = ML_ARTIFACTS_DIR / "feature_scaler.pkl"
 

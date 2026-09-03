@@ -64,11 +64,18 @@ def _classify_priority(revenue_at_risk: float, risk_score: float) -> Priority:
 # Composite risk score
 # ---------------------------------------------------------------------------
 
-def _compute_risk_score(revenue_at_risk: float, recovery_probability: float, confidence: float) -> float:
-    rev_band = min(revenue_at_risk / THRESHOLDS["revenue_high"], 1.0)
-    score = 0.4 * rev_band + 0.4 * confidence + 0.2 * recovery_probability
-    return round(min(score, 1.0), 4)
+def _compute_risk_score(
+    revenue_at_risk: float,
+    risk_probability: float,
+    confidence: float,
+) -> float:
+    rev_band = min(
+        revenue_at_risk / THRESHOLDS["revenue_high"],
+        1.0
+    )
 
+    score = (0.4 * rev_band + 0.4 * confidence + 0.2 * risk_probability)
+    return round(min(score, 1.0), 4)
 
 # ---------------------------------------------------------------------------
 # Revenue reasoning
@@ -196,16 +203,24 @@ def decide(
     # decide_checkout returns a 4-tuple (action, reason, confidence, prob).
     # All other rule functions return a 3-tuple; recovery_probability stays
     # at the case value (0.0 when no upstream model exists for that domain).
+        # --- Route to domain rule module --------------------------------------
     if case.case_type == CaseType.PAYMENT_FAILURE:
         action, reason, confidence = rules.decide_payment(case)
         effective_prob = case.recovery_probability
+        risk_probability = effective_prob
 
     elif case.case_type == CaseType.CHECKOUT_ABANDONMENT:
         action, reason, confidence, effective_prob = rules.decide_checkout(case)
+        risk_probability = effective_prob
 
     elif case.case_type == CaseType.OVERDUE_RECEIVABLE:
         action, reason, confidence = rules.decide_receivable(case)
         effective_prob = case.recovery_probability
+
+        # O2C model predicts late-payment risk, not recovery probability.
+        risk_probability = float(
+            case.context.get("late_payment_probability", 0.0)
+        )
 
     else:
         action, reason, confidence = (
@@ -214,6 +229,7 @@ def decide(
             0.0,
         )
         effective_prob = case.recovery_probability
+        risk_probability = effective_prob
 
     # --- available_interventions whitelist --------------------------------
     if case.available_interventions and action not in case.available_interventions:
@@ -231,22 +247,26 @@ def decide(
     )
 
     # --- Scoring and classification (no case mutation) -------------------
-    risk_score = _compute_risk_score(case.revenue_at_risk, effective_prob, confidence)
-    priority   = _classify_priority(case.revenue_at_risk, risk_score)
+    risk_score = _compute_risk_score(
+        case.revenue_at_risk,
+        risk_probability,
+        confidence,
+    )
+    priority = _classify_priority(case.revenue_at_risk, risk_score)
     rev_reasoning = _revenue_reasoning(
         effective_prob, case.revenue_at_risk, intervention_lift_assumption
     )
 
     return DecisionResult(
-        case_id              = case.case_id,
-        case_type            = case.case_type,
-        revenue_at_risk      = case.revenue_at_risk,
-        recovery_probability = effective_prob,
-        risk_score           = risk_score,
-        priority             = priority,
-        recommended_action   = action,
-        reason               = reason,
-        confidence           = round(confidence, 4),
-        guardrail_status     = guardrail_status,
-        revenue_reasoning    = rev_reasoning,
+        case_id=case.case_id,
+        case_type=case.case_type,
+        revenue_at_risk=case.revenue_at_risk,
+        recovery_probability=effective_prob,
+        risk_score=risk_score,
+        priority=priority,
+        recommended_action=action,
+        reason=reason,
+        confidence=round(confidence, 4),
+        guardrail_status=guardrail_status,
+        revenue_reasoning=rev_reasoning,
     )
