@@ -220,7 +220,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     result["posting_month"] = result["posting_date"].dt.month
 
     result = result[FEATURE_COLS + [
-        "id",
+        "invoice_id",
         "cust_number",
         "due_date",
         "posting_date",
