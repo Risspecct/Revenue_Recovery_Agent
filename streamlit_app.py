@@ -26,6 +26,7 @@ def init_state() -> None:
     st.session_state.setdefault("latest_cases", [])
     st.session_state.setdefault("latest_error", None)
     st.session_state.setdefault("selected_case_id", None)
+    st.session_state.setdefault("drawer_view", "decision")
     st.session_state.setdefault("latest_execution", None)
     st.session_state.setdefault("latest_execution_error", None)
     st.session_state.setdefault("last_frontend_refresh", None)
@@ -153,6 +154,7 @@ def execute_case(case_id: str) -> str | None:
 
     st.session_state.latest_execution = payload
     st.session_state.latest_execution_error = None
+    st.session_state.drawer_view = "execution"
     return None
 
 
@@ -422,6 +424,7 @@ def render_queue_table(cases: list[dict[str, Any]]) -> None:
         row[7].markdown(status_badge(derived_status(case)), unsafe_allow_html=True)
         if row[8].button("Review", key=f"review_{case['case_id']}", use_container_width=True):
             st.session_state.selected_case_id = case["case_id"]
+            st.session_state.drawer_view = "decision"
             st.session_state.latest_execution = None
             st.session_state.latest_execution_error = None
         st.markdown("<div style='border-bottom:1px solid #e2e8f0;margin:8px 0 6px 0;'></div>", unsafe_allow_html=True)
@@ -472,7 +475,7 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
                 if execution_error:
                     st.error(execution_error)
                 else:
-                    st.success("Execution response captured for this case.")
+                    st.rerun()
         else:
             st.info("No executable recovery action is available for this case.")
 
@@ -488,7 +491,76 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
 
         if st.button("Back to work queue", use_container_width=True):
             st.session_state.selected_case_id = None
+            st.session_state.drawer_view = "decision"
             st.rerun()
+
+
+def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict[str, Any]) -> None:
+    decision = execution_payload.get("decision", {})
+    execution = execution_payload.get("execution", {})
+    action = str(execution.get("action") or decision.get("recommended_action") or case["recommended_action"])
+    status = str(execution.get("status", "Status not provided"))
+    simulated = execution.get("simulated")
+    simulated_label = "YES" if simulated is True else "NO" if simulated is False else "Not provided by API"
+
+    with st.container(border=True):
+        header_cols = st.columns([0.62, 0.38])
+        with header_cols[0]:
+            st.markdown("**Recovery action executed**")
+            st.markdown(f"`{case['case_id']}`")
+        with header_cols[1]:
+            st.markdown(guardrail_badge(action), unsafe_allow_html=True)
+            st.markdown(f"Status: **{escape(status)}**")
+
+        st.divider()
+        st.markdown("**01 - Execution**")
+        exec_cols = st.columns([1.15, 1.15, 1.15])
+        execution_fields = (
+            ("Action", action),
+            ("Status", status),
+            ("Simulated", simulated_label),
+        )
+        for column, (label, value) in zip(exec_cols, execution_fields):
+            with column:
+                st.markdown(
+                    (
+                        f"<div style='font-size:11px;font-weight:600;color:#64748b;"
+                        f"text-transform:uppercase;letter-spacing:0.06em;'>{escape(label)}</div>"
+                        f"<div style='margin-top:6px;font-size:15px;font-weight:700;"
+                        f"color:#0f172a;white-space:nowrap;'>{escape(str(value))}</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+        execution_id = execution.get("execution_id")
+        if execution_id:
+            st.caption(f"Execution ID: {execution_id}")
+
+        st.markdown("**02 - Execution Message**")
+        if execution.get("message") is not None:
+            st.write(execution["message"])
+
+        st.markdown("**03 - Recovery Context**")
+        context_rows = [
+            ("Case ID", case["case_id"]),
+            ("Case type", format_type(case["case_type"])),
+            ("Revenue at risk", format_inr(float(case["revenue_at_risk"]))),
+            ("Recommended action", format_action(case["recommended_action"]).upper()),
+            ("Executed action", action),
+        ]
+        for label, value in context_rows:
+            st.markdown(f"**{label}:** {escape(str(value))}")
+
+        st.divider()
+        action_cols = st.columns(2)
+        with action_cols[0]:
+            if st.button("Return to work queue", use_container_width=True):
+                st.session_state.selected_case_id = None
+                st.session_state.drawer_view = "decision"
+                st.rerun()
+        with action_cols[1]:
+            if st.button("View case decision", use_container_width=True):
+                st.session_state.drawer_view = "decision"
+                st.rerun()
 
 
 def main() -> None:
@@ -681,7 +753,16 @@ def main() -> None:
 
     if drawer_open and selected_case:
         with content_area[1]:
-            render_o2c_drawer(selected_case)
+            execution_payload = st.session_state.latest_execution
+            execution_matches_case = (
+                isinstance(execution_payload, dict)
+            )
+            if execution_matches_case:
+                execution_matches_case = execution_payload.get("decision", {}).get("case_id") == selected_case["case_id"]
+            if st.session_state.drawer_view == "execution" and execution_matches_case:
+                render_execution_result_drawer(selected_case, execution_payload)
+            else:
+                render_o2c_drawer(selected_case)
 
     st.markdown(
         (
