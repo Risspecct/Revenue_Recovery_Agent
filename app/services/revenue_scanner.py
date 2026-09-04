@@ -143,9 +143,18 @@ def _checkout_cases(path: Path | None) -> Iterable[RecoveryCase]:
             case_id=f"checkout_{session_id}",
             case_type=CaseType.CHECKOUT_ABANDONMENT,
             customer_id=str(visitor_id),
-            revenue_at_risk=_as_float(row.get("revenue_at_risk", row.get("cart_value"))),
+            revenue_at_risk=_as_float(
+                row.get("revenue_at_risk", row.get("cart_value"))
+            ),
             recovery_probability=probability,
-            context=decision_context,
+            context={
+                **decision_context,
+                "recovered_within_7d": (
+                    _as_bool(row["recovered_within_7d"])
+                    if row.get("recovered_within_7d", "") != ""
+                    else None
+                ),
+            },
         )
 
 

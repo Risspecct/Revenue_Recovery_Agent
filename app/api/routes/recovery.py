@@ -15,8 +15,13 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse, ScanResponse
-from app.services.recovery_service import evaluate, evaluate_and_execute, execute_cached_case
-from app.services.revenue_scanner import get_latest_scan, scan_revenue_risk
+from app.services.recovery_service import (
+    evaluate,
+    evaluate_and_execute,
+    execute_cached_case,
+)
+from app.services.revenue_scanner import get_case, get_latest_scan, scan_revenue_risk
+from app.services.batch_recovery import calculate_batch_recovery
 
 router = APIRouter(tags=["recovery"])
 
@@ -127,3 +132,39 @@ async def execute_scanned_case(case_id: str) -> ExecuteResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Execution engine error: {type(exc).__name__}: {exc}",
         ) from exc
+
+
+@router.get("/batch-results")
+def get_batch_recovery_results():
+    """
+    Return historical replay recovery metrics for the latest scan.
+    """
+    scan = get_latest_scan()
+
+    if scan is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No revenue scan has run.",
+        )
+
+    original_cases = {
+        result.case_id: get_case(result.case_id)
+        for result in scan.cases
+    }
+
+    original_cases = {
+        case_id: case
+        for case_id, case in original_cases.items()
+        if case is not None
+    }
+
+    metrics = calculate_batch_recovery(
+        decisions=scan.cases,
+        original_cases=original_cases,
+    )
+
+    return {
+        "status": "ok",
+        "measurement_type": "historical_replay",
+        "metrics": metrics.to_dict(),
+    }
