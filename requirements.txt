@@ -7,7 +7,7 @@ pandas
 # API
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-streamlit>=1.38.0
+streamlit>=1.45.0
 
 # Testing
 pytest>=7.0 

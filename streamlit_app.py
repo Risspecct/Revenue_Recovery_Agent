@@ -26,6 +26,8 @@ def init_state() -> None:
     st.session_state.setdefault("latest_cases", [])
     st.session_state.setdefault("latest_error", None)
     st.session_state.setdefault("selected_case_id", None)
+    st.session_state.setdefault("latest_execution", None)
+    st.session_state.setdefault("latest_execution_error", None)
     st.session_state.setdefault("last_frontend_refresh", None)
     st.session_state.setdefault("queue_page", 1)
     st.session_state.setdefault("queue_page_size", 6)
@@ -132,7 +134,25 @@ def run_scan() -> str | None:
     st.session_state.latest_cases = normalized["cases"]
     st.session_state.last_frontend_refresh = datetime.now()
     st.session_state.latest_error = None
+    st.session_state.latest_execution = None
+    st.session_state.latest_execution_error = None
     st.session_state.queue_page = 1
+    return None
+
+
+def execute_case(case_id: str) -> str | None:
+    payload, api_error = api_request(f"/api/recovery/execute/{case_id}", method="POST")
+    if api_error:
+        st.session_state.latest_execution_error = api_error
+        return api_error
+
+    if not isinstance(payload, dict) or "decision" not in payload or "execution" not in payload:
+        message = "The backend execution response was malformed."
+        st.session_state.latest_execution_error = message
+        return message
+
+    st.session_state.latest_execution = payload
+    st.session_state.latest_execution_error = None
     return None
 
 
@@ -158,6 +178,13 @@ def format_type(case_type: str) -> str:
 
 def format_action(value: str) -> str:
     return value.replace("_", " ").title()
+
+
+def find_selected_case() -> dict[str, Any] | None:
+    case_id = st.session_state.selected_case_id
+    if not case_id:
+        return None
+    return next((case for case in st.session_state.latest_cases if case["case_id"] == case_id), None)
 
 
 def format_last_scanned() -> str:
@@ -230,6 +257,37 @@ def status_badge(value: str) -> str:
         f"background:{background};color:{text_color};font-size:11px;font-weight:600;'>"
         f"{escape(value)}</span>"
     )
+
+
+def optional_backend_value(value: Any, suffix: str = "") -> str:
+    if value in (None, ""):
+        return "Not provided by API"
+    if isinstance(value, float):
+        return f"{value:.2f}{suffix}"
+    return f"{value}{suffix}"
+
+
+def percent_backend_value(value: Any) -> str:
+    if value in (None, ""):
+        return "Not provided by API"
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def guardrail_explanation(case: dict[str, Any]) -> str:
+    status = case["guardrail_status"]
+    action = case["recommended_action"]
+    if status == "BLOCKED":
+        return "The backend guardrail status is BLOCKED, so execution is not available."
+    if action == "NO_ACTION":
+        return "The backend recommended NO_ACTION, so no recovery action is available."
+    return "The backend returned a non-blocked guardrail status for the recommended action."
+
+
+def is_executable(case: dict[str, Any]) -> bool:
+    return case["recommended_action"] != "NO_ACTION" and case["guardrail_status"] != "BLOCKED"
 
 
 def revenue_display(case: dict[str, Any]) -> str:
@@ -364,7 +422,73 @@ def render_queue_table(cases: list[dict[str, Any]]) -> None:
         row[7].markdown(status_badge(derived_status(case)), unsafe_allow_html=True)
         if row[8].button("Review", key=f"review_{case['case_id']}", use_container_width=True):
             st.session_state.selected_case_id = case["case_id"]
+            st.session_state.latest_execution = None
+            st.session_state.latest_execution_error = None
         st.markdown("<div style='border-bottom:1px solid #e2e8f0;margin:8px 0 6px 0;'></div>", unsafe_allow_html=True)
+
+
+def render_o2c_drawer(case: dict[str, Any]) -> None:
+    revenue_reasoning = case.get("revenue_reasoning", {})
+    late_payment_probability = case.get("late_payment_probability") or revenue_reasoning.get("late_payment_probability")
+    days_overdue = case.get("days_overdue")
+    customer = case.get("customer") or case.get("customer_name") or case.get("customer_id") or "Not provided by API"
+
+    with st.container(border=True):
+        header_cols = st.columns([0.62, 0.38])
+        with header_cols[0]:
+            st.markdown("**OVERDUE RECEIVABLE**")
+            st.markdown(f"`{case['case_id']}`")
+            st.caption(f"Customer: {customer}")
+        with header_cols[1]:
+            st.markdown(priority_badge(case["priority"]), unsafe_allow_html=True)
+            st.markdown(f"**{format_inr(float(case['revenue_at_risk']))}**")
+            st.caption(f"Days overdue: {optional_backend_value(days_overdue)}")
+
+        st.divider()
+        st.markdown("**01 - Risk Assessment**")
+        risk_cols = st.columns(3)
+        risk_cols[0].metric("Late-payment probability", percent_backend_value(late_payment_probability))
+        risk_cols[1].metric("Risk score", f"{float(case['risk_score']):.2f}")
+        risk_cols[2].metric("Priority", case["priority"])
+
+        st.markdown("**02 - Why This Case**")
+        st.write(case["reason"])
+
+        st.markdown("**03 - Agent Decision**")
+        st.markdown(f"Recommended action: **{format_action(case['recommended_action']).upper()}**")
+        if "confidence" in case and case["confidence"] is not None:
+            st.markdown(f"Confidence: **{float(case['confidence']) * 100:.0f}%**")
+        st.caption("Decision reason")
+        st.write(case["reason"])
+
+        st.markdown("**04 - Guardrail**")
+        st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
+        st.caption(guardrail_explanation(case))
+
+        st.divider()
+        if is_executable(case):
+            if st.button("Execute recovery action", type="primary", use_container_width=True):
+                execution_error = execute_case(case["case_id"])
+                if execution_error:
+                    st.error(execution_error)
+                else:
+                    st.success("Execution response captured for this case.")
+        else:
+            st.info("No executable recovery action is available for this case.")
+
+        if st.session_state.latest_execution and st.session_state.latest_execution["decision"]["case_id"] == case["case_id"]:
+            execution = st.session_state.latest_execution["execution"]
+            st.caption(
+                "Execution response captured: "
+                f"{execution.get('status', 'status unavailable')} for "
+                f"{execution.get('action', case['recommended_action'])}"
+            )
+        if st.session_state.latest_execution_error:
+            st.error(st.session_state.latest_execution_error)
+
+        if st.button("Back to work queue", use_container_width=True):
+            st.session_state.selected_case_id = None
+            st.rerun()
 
 
 def main() -> None:
@@ -460,88 +584,104 @@ def main() -> None:
         st.info(f"Backend URL: `{API_BASE_URL}`")
         return
 
-    st.markdown("### Recovery work queue")
-    st.caption("Prioritized cases requiring review or recovery action.")
+    selected_case = find_selected_case()
+    drawer_open = selected_case is not None and selected_case["case_type"] == "OVERDUE_RECEIVABLE"
+    content_area = st.columns([0.64, 0.36], gap="large") if drawer_open else [st.container()]
 
-    control_cols = st.columns([2.8, 1.5, 1.1])
-    with control_cols[0]:
-        filter_name = st.segmented_control(
-            "Queue filter",
-            ["All", "High priority", "Checkout", "Receivables", "Actionable", "No action"],
-            default="All",
-            label_visibility="collapsed",
-        )
-    with control_cols[1]:
-        sort_by = st.selectbox("Sort", ["Priority", "Revenue at Risk", "Risk Score"], index=0)
-    with control_cols[2]:
-        st.session_state.queue_page_size = st.selectbox(
-            "Rows",
-            PAGE_SIZE_OPTIONS,
-            index=PAGE_SIZE_OPTIONS.index(st.session_state.queue_page_size) if st.session_state.queue_page_size in PAGE_SIZE_OPTIONS else 0,
-        )
-
-    search_term = st.text_input("Search by Case ID or Customer", placeholder="Search by Case ID or Customer")
-    filtered_cases = apply_filters(cases, filter_name, search_term, sort_by)
-
-    if not filtered_cases:
-        st.info("No cases match the current search and filter settings.")
-        return
-
-    page_size = int(st.session_state.queue_page_size)
-    total_cases = len(filtered_cases)
-    total_pages = max(1, math.ceil(total_cases / page_size))
-    st.session_state.queue_page = min(max(1, st.session_state.queue_page), total_pages)
-    start_index = (st.session_state.queue_page - 1) * page_size
-    end_index = min(start_index + page_size, total_cases)
-    page_cases = filtered_cases[start_index:end_index]
-
-    with st.container(border=True):
-        render_queue_table(page_cases)
-
-    footer_cols = st.columns([0.55, 0.45])
-    with footer_cols[0]:
-        st.caption(f"Showing {start_index + 1}–{end_index} of {total_cases} cases")
-    with footer_cols[1]:
-        nav_cols = st.columns([1, 1, 1])
-        with nav_cols[0]:
-            if st.button("Previous", disabled=st.session_state.queue_page == 1, use_container_width=True):
-                st.session_state.queue_page -= 1
-                st.rerun()
-        with nav_cols[1]:
+    with content_area[0]:
+        if drawer_open:
             st.markdown(
-                f"<div style='text-align:center;padding-top:8px;font-size:12px;color:#475569;'>Page {st.session_state.queue_page} of {total_pages}</div>",
+                "<div style='padding:8px 12px;margin-bottom:10px;background:#f1f5f9;border:1px solid #e2e8f0;color:#64748b;font-size:12px;'>"
+                "Work queue remains visible while the selected O2C case is open."
+                "</div>",
                 unsafe_allow_html=True,
             )
-        with nav_cols[2]:
-            if st.button("Next", disabled=st.session_state.queue_page == total_pages, use_container_width=True):
-                st.session_state.queue_page += 1
-                st.rerun()
 
-    metrics = queue_metrics(cases, payload)
-    metric_cols = st.columns(4)
-    with metric_cols[0]:
-        render_metric_card("REVENUE AT RISK", format_inr(float(metrics["revenue_at_risk"])), "Calculated from the current queue.")
-    with metric_cols[1]:
-        render_metric_card("CASES DETECTED", str(metrics["cases_detected"]), "Returned by the latest backend scan.")
-    with metric_cols[2]:
-        render_metric_card("HIGH PRIORITY", str(metrics["high_priority"]), "Current queue items marked HIGH.")
-    with metric_cols[3]:
-        render_metric_card("ACTIONS RECOMMENDED", str(metrics["actions_recommended"]), "Cases with a recommended action other than NO_ACTION.")
+        metrics = queue_metrics(cases, payload)
+        metric_cols = st.columns(4)
+        with metric_cols[0]:
+            render_metric_card("REVENUE AT RISK", format_inr(float(metrics["revenue_at_risk"])), "Calculated from the current queue.")
+        with metric_cols[1]:
+            render_metric_card("CASES DETECTED", str(metrics["cases_detected"]), "Returned by the latest backend scan.")
+        with metric_cols[2]:
+            render_metric_card("HIGH PRIORITY", str(metrics["high_priority"]), "Current queue items marked HIGH.")
+        with metric_cols[3]:
+            render_metric_card("ACTIONS RECOMMENDED", str(metrics["actions_recommended"]), "Cases with a recommended action other than NO_ACTION.")
 
-    st.markdown("### Revenue-risk sources")
-    st.caption("Where the current recovery queue is coming from.")
-    counts = source_counts(cases)
-    source_cols = st.columns(3)
-    with source_cols[0]:
-        render_source_card("OVERDUE RECEIVABLES", counts["OVERDUE_RECEIVABLE"], "Current source active.")
-    with source_cols[1]:
-        render_source_card("CHECKOUT ABANDONMENTS", counts["CHECKOUT_ABANDONMENT"], "Current source active.")
-    with source_cols[2]:
-        subtitle = "No source data configured" if counts["PAYMENT_FAILURE"] == 0 else "Current source active."
-        render_source_card("PAYMENT FAILURES", counts["PAYMENT_FAILURE"], subtitle, inactive=counts["PAYMENT_FAILURE"] == 0)
+        st.markdown("### Revenue-risk sources")
+        st.caption("Where the current recovery queue is coming from.")
+        counts = source_counts(cases)
+        source_cols = st.columns(3)
+        with source_cols[0]:
+            render_source_card("OVERDUE RECEIVABLES", counts["OVERDUE_RECEIVABLE"], "Current source active.")
+        with source_cols[1]:
+            render_source_card("CHECKOUT ABANDONMENTS", counts["CHECKOUT_ABANDONMENT"], "Current source active.")
+        with source_cols[2]:
+            subtitle = "No source data configured" if counts["PAYMENT_FAILURE"] == 0 else "Current source active."
+            render_source_card("PAYMENT FAILURES", counts["PAYMENT_FAILURE"], subtitle, inactive=counts["PAYMENT_FAILURE"] == 0)
 
-    if st.session_state.selected_case_id:
-        st.info(f"Case selected: {st.session_state.selected_case_id}")
+        st.markdown("### Recovery work queue")
+        st.caption("Prioritized cases requiring review or recovery action.")
+
+        control_cols = st.columns([2.8, 1.5, 1.1])
+        with control_cols[0]:
+            filter_name = st.segmented_control(
+                "Queue filter",
+                ["All", "High priority", "Checkout", "Receivables", "Actionable", "No action"],
+                default="All",
+                label_visibility="collapsed",
+            )
+        with control_cols[1]:
+            sort_by = st.selectbox("Sort", ["Priority", "Revenue at Risk", "Risk Score"], index=0)
+        with control_cols[2]:
+            st.session_state.queue_page_size = st.selectbox(
+                "Rows",
+                PAGE_SIZE_OPTIONS,
+                index=PAGE_SIZE_OPTIONS.index(st.session_state.queue_page_size) if st.session_state.queue_page_size in PAGE_SIZE_OPTIONS else 0,
+            )
+
+        search_term = st.text_input("Search by Case ID or Customer", placeholder="Search by Case ID or Customer")
+        filtered_cases = apply_filters(cases, filter_name, search_term, sort_by)
+
+        if not filtered_cases:
+            st.info("No cases match the current search and filter settings.")
+        else:
+            page_size = int(st.session_state.queue_page_size)
+            total_cases = len(filtered_cases)
+            total_pages = max(1, math.ceil(total_cases / page_size))
+            st.session_state.queue_page = min(max(1, st.session_state.queue_page), total_pages)
+            start_index = (st.session_state.queue_page - 1) * page_size
+            end_index = min(start_index + page_size, total_cases)
+            page_cases = filtered_cases[start_index:end_index]
+
+            with st.container(border=True):
+                render_queue_table(page_cases)
+
+            footer_cols = st.columns([0.55, 0.45])
+            with footer_cols[0]:
+                st.caption(f"Showing {start_index + 1}-{end_index} of {total_cases} cases")
+            with footer_cols[1]:
+                nav_cols = st.columns([1, 1, 1])
+                with nav_cols[0]:
+                    if st.button("Previous", disabled=st.session_state.queue_page == 1, use_container_width=True):
+                        st.session_state.queue_page -= 1
+                        st.rerun()
+                with nav_cols[1]:
+                    st.markdown(
+                        f"<div style='text-align:center;padding-top:8px;font-size:12px;color:#475569;'>Page {st.session_state.queue_page} of {total_pages}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with nav_cols[2]:
+                    if st.button("Next", disabled=st.session_state.queue_page == total_pages, use_container_width=True):
+                        st.session_state.queue_page += 1
+                        st.rerun()
+
+        if selected_case and selected_case["case_type"] != "OVERDUE_RECEIVABLE":
+            st.info(f"Case selected: {selected_case['case_id']}. Detail drawer is available for overdue receivable cases in this step.")
+
+    if drawer_open and selected_case:
+        with content_area[1]:
+            render_o2c_drawer(selected_case)
 
     st.markdown(
         (
