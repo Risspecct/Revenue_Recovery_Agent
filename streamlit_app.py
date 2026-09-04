@@ -720,11 +720,63 @@ def main() -> None:
             background: #ffffff;
             color: #0f172a;
         }
-        div[data-baseweb="select"] > div,
         div[data-baseweb="input"] {
             background: #ffffff;
             border-color: #cbd5e1;
             color: #0f172a;
+        }
+        div[data-testid="stTextInputRootElement"] {
+            min-height: 40px;
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 4px !important;
+            color: #0f172a !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stTextInputRootElement"] input {
+            background: transparent !important;
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+        }
+        div[data-testid="stTextInputRootElement"] input::placeholder {
+            color: #64748b !important;
+            -webkit-text-fill-color: #64748b !important;
+        }
+        div[data-testid="stTextInputRootElement"]:hover {
+            background: #f8fafc !important;
+            border-color: #94a3b8 !important;
+        }
+        div[data-testid="stTextInputRootElement"]:focus-within {
+            background: #ffffff !important;
+            border-color: #b91c1c !important;
+            box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.12) !important;
+        }
+        div[data-testid="stSelectbox"] [role="group"] {
+            min-height: 40px;
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 4px !important;
+            color: #0f172a !important;
+            box-shadow: none !important;
+        }
+        div[data-testid="stSelectbox"] [role="group"] input[role="combobox"] {
+            background: transparent !important;
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+        }
+        div[data-testid="stSelectbox"] [role="group"] button {
+            background: transparent !important;
+            color: #334155 !important;
+            -webkit-text-fill-color: #334155 !important;
+        }
+        div[data-testid="stSelectbox"] [role="group"]:hover {
+            background: #f8fafc !important;
+            border-color: #94a3b8 !important;
+        }
+        div[data-testid="stSelectbox"] [role="group"]:focus-within {
+            background: #ffffff !important;
+            border-color: #b91c1c !important;
+            box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.12) !important;
         }
         div[data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
             background-color: #ffffff !important;
