@@ -752,8 +752,23 @@ def main() -> None:
         }
         .block-container {
             max-width: 1340px;
-            padding-top: 1rem;
+            padding-top: 4rem;
             padding-bottom: 2rem;
+        }
+        .dashboard-header {
+            padding: 0.15rem 0 0.35rem;
+        }
+        .dashboard-header-title {
+            color: #0f172a;
+            font-size: 28px;
+            font-weight: 750;
+            line-height: 1.15;
+        }
+        .dashboard-header-subtitle {
+            margin-top: 6px;
+            color: #64748b;
+            font-size: 14px;
+            line-height: 1.4;
         }
         div[data-testid="stHorizontalBlock"] > div {
             align-self: stretch;
@@ -873,10 +888,14 @@ def main() -> None:
 
     left, right = st.columns([0.72, 0.28])
     with left:
-        st.title("Revenue Recovery")
-        st.caption("Recovery operations for identifying and acting on revenue at risk")
+        st.markdown(
+            "<div class='dashboard-header'>"
+            "<div class='dashboard-header-title'>Revenue Recovery</div>"
+            "<div class='dashboard-header-subtitle'>Identify revenue at risk and take the right recovery action.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
     with right:
-        st.caption(format_last_scanned())
         if st.button("Scan for revenue at risk", type="primary", use_container_width=True):
             scan_error = run_scan()
             if scan_error:
