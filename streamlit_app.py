@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -12,6 +13,7 @@ import streamlit as st
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+DETAILS_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 PAGE_SIZE_OPTIONS = [6, 10, 25, 50]
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 CASE_TYPE_LABELS = {
@@ -29,6 +31,9 @@ def init_state() -> None:
     st.session_state.setdefault("drawer_view", "decision")
     st.session_state.setdefault("latest_execution", None)
     st.session_state.setdefault("latest_execution_error", None)
+    st.session_state.setdefault("case_details_loading", False)
+    st.session_state.setdefault("case_details_error", None)
+    st.session_state.setdefault("case_details_future", None)
     st.session_state.setdefault("last_frontend_refresh", None)
     st.session_state.setdefault("queue_page", 1)
     st.session_state.setdefault("queue_page_size", 6)
@@ -141,6 +146,22 @@ def run_scan() -> str | None:
     return None
 
 
+def fetch_case_details() -> tuple[dict[str, Any] | None, str | None]:
+    payload, api_error = api_request("/api/recovery/cases")
+    if api_error:
+        return None, api_error
+    try:
+        return normalize_scan_payload(payload or {}), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+def start_case_details_load() -> None:
+    st.session_state.case_details_loading = True
+    st.session_state.case_details_error = None
+    st.session_state.case_details_future = DETAILS_EXECUTOR.submit(fetch_case_details)
+
+
 def execute_case(case_id: str) -> str | None:
     payload, api_error = api_request(f"/api/recovery/execute/{case_id}", method="POST")
     if api_error:
@@ -194,6 +215,9 @@ def close_drawer() -> None:
     st.session_state.drawer_view = "decision"
     st.session_state.latest_execution = None
     st.session_state.latest_execution_error = None
+    st.session_state.case_details_loading = False
+    st.session_state.case_details_error = None
+    st.session_state.case_details_future = None
 
 
 def render_drawer_backdrop() -> None:
@@ -441,6 +465,7 @@ def render_queue_table(cases: list[dict[str, Any]]) -> None:
             st.session_state.drawer_view = "decision"
             st.session_state.latest_execution = None
             st.session_state.latest_execution_error = None
+            start_case_details_load()
         st.markdown("<div style='border-bottom:1px solid #e2e8f0;margin:8px 0 6px 0;'></div>", unsafe_allow_html=True)
 
 
@@ -464,9 +489,19 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
         st.divider()
         st.markdown("**01 - Risk Assessment**")
         risk_cols = st.columns(3)
-        risk_cols[0].metric("Late-payment probability", percent_backend_value(late_payment_probability))
-        risk_cols[1].metric("Risk score", f"{float(case['risk_score']):.2f}")
-        risk_cols[2].metric("Priority", case["priority"])
+        assessment_metrics = (
+            ("Late-payment probability", percent_backend_value(late_payment_probability)),
+            ("Risk score", f"{float(case['risk_score']):.2f}"),
+            ("Priority", case["priority"]),
+        )
+        for column, (label, value) in zip(risk_cols, assessment_metrics):
+            column.markdown(
+                (
+                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}</div>"
+                    f"<div style='margin-top:6px;font-size:20px;font-weight:700;color:#0f172a;'>{escape(value)}</div>"
+                ),
+                unsafe_allow_html=True,
+            )
 
         st.markdown("**02 - Why This Case**")
         st.write(case["reason"])
@@ -626,6 +661,57 @@ def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict
             if st.button("View case decision", use_container_width=True):
                 st.session_state.drawer_view = "decision"
                 st.rerun()
+
+
+@st.fragment(run_every=0.2)
+def render_case_drawer_content() -> None:
+    if st.session_state.case_details_loading:
+        future: Future[tuple[dict[str, Any] | None, str | None]] | None = st.session_state.case_details_future
+        if future is None:
+            start_case_details_load()
+        elif future.done():
+            try:
+                payload, api_error = future.result()
+            except Exception:
+                payload, api_error = None, "The frontend could not load this case."
+            st.session_state.case_details_future = None
+            if api_error:
+                st.session_state.case_details_loading = False
+                st.session_state.case_details_error = api_error
+            else:
+                st.session_state.latest_payload = payload
+                st.session_state.latest_cases = (payload or {}).get("cases", [])
+                st.session_state.case_details_loading = False
+                st.session_state.case_details_error = None
+            st.rerun()
+
+        st.info("Loading case details…")
+        return
+
+    selected_case = find_selected_case()
+    if selected_case is None:
+        st.error(st.session_state.case_details_error or "This case could not be loaded.")
+        retry_cols = st.columns(2)
+        with retry_cols[0]:
+            if st.button("Retry loading details", use_container_width=True):
+                start_case_details_load()
+                st.rerun()
+        with retry_cols[1]:
+            if st.button("Return to work queue", use_container_width=True):
+                close_drawer()
+                st.rerun()
+        return
+
+    execution_payload = st.session_state.latest_execution
+    execution_matches_case = isinstance(execution_payload, dict)
+    if execution_matches_case:
+        execution_matches_case = execution_payload.get("decision", {}).get("case_id") == selected_case["case_id"]
+    if st.session_state.drawer_view == "execution" and execution_matches_case:
+        render_execution_result_drawer(selected_case, execution_payload)
+    elif selected_case["case_type"] == "CHECKOUT_ABANDONMENT":
+        render_checkout_drawer(selected_case)
+    else:
+        render_o2c_drawer(selected_case)
 
 
 def main() -> None:
@@ -801,11 +887,7 @@ def main() -> None:
         st.info("No revenue scan has run yet, or the latest work queue is empty.")
         return
 
-    selected_case = find_selected_case()
-    drawer_open = selected_case is not None and selected_case["case_type"] in {
-        "OVERDUE_RECEIVABLE",
-        "CHECKOUT_ABANDONMENT",
-    }
+    drawer_open = bool(st.session_state.selected_case_id)
     content_area = [st.container()]
 
     with content_area[0]:
@@ -888,7 +970,7 @@ def main() -> None:
                         st.session_state.queue_page += 1
                         st.rerun()
 
-    if drawer_open and selected_case:
+    if drawer_open:
         st.html(
             """
             <script>
@@ -911,44 +993,7 @@ def main() -> None:
         )
         render_drawer_backdrop()
         with st.container(key="case-drawer"):
-            execution_payload = st.session_state.latest_execution
-            execution_matches_case = isinstance(execution_payload, dict)
-            if execution_matches_case:
-                execution_matches_case = execution_payload.get("decision", {}).get("case_id") == selected_case["case_id"]
-            if st.session_state.drawer_view == "execution" and execution_matches_case:
-                render_execution_result_drawer(selected_case, execution_payload)
-            elif selected_case["case_type"] == "CHECKOUT_ABANDONMENT":
-                render_checkout_drawer(selected_case)
-            else:
-                render_o2c_drawer(selected_case)
-    elif drawer_open:
-        st.html(
-            """
-            <script>
-            (() => {
-                if (window.__revenueRecoveryDrawerHandlersBound) return;
-                window.__revenueRecoveryDrawerHandlersBound = true;
-                const closeDrawer = () => Array.from(document.querySelectorAll("button")).find(
-                    (button) => ["Back to work queue", "Return to work queue"].includes(button.innerText.trim())
-                )?.click();
-                document.addEventListener("keydown", (event) => {
-                    if (event.key === "Escape") closeDrawer();
-                });
-                document.addEventListener("click", (event) => {
-                    if (event.target.closest(".drawer-backdrop")) closeDrawer();
-                });
-            })();
-            </script>
-            """,
-            unsafe_allow_javascript=True,
-        )
-        render_drawer_backdrop()
-        with st.container(key="case-drawer"):
-            if st.session_state.latest_error:
-                st.error(st.session_state.latest_error)
-            else:
-                st.info("Loading case details...")
-
+            render_case_drawer_content()
     st.markdown(
         (
             "<div style='margin-top:18px;border:1px solid #e2e8f0;background:#fff7f7;padding:14px 16px;'>"
