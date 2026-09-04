@@ -53,9 +53,9 @@ def api_request(path: str, method: str = "GET") -> tuple[dict[str, Any] | None, 
             detail = f"HTTP {exc.code}"
         return None, detail
     except error.URLError:
-        return None, f"Unable to reach the FastAPI backend at {API_BASE_URL}."
+        return None, "Unable to reach the recovery service."
     except json.JSONDecodeError:
-        return None, "The backend returned malformed JSON."
+        return None, "The recovery service returned malformed data."
     except Exception:
         return None, "The frontend could not complete the API request."
 
@@ -189,6 +189,20 @@ def find_selected_case() -> dict[str, Any] | None:
     return next((case for case in st.session_state.latest_cases if case["case_id"] == case_id), None)
 
 
+def close_drawer() -> None:
+    st.session_state.selected_case_id = None
+    st.session_state.drawer_view = "decision"
+    st.session_state.latest_execution = None
+    st.session_state.latest_execution_error = None
+
+
+def render_drawer_backdrop() -> None:
+    st.markdown("<div class='drawer-backdrop' aria-hidden='true'></div>", unsafe_allow_html=True)
+    if st.button("Close drawer", key="drawer_backdrop_close"):
+        close_drawer()
+        st.rerun()
+
+
 def format_last_scanned() -> str:
     refreshed_at = st.session_state.last_frontend_refresh
     payload = st.session_state.latest_payload
@@ -263,7 +277,7 @@ def status_badge(value: str) -> str:
 
 def optional_backend_value(value: Any, suffix: str = "") -> str:
     if value in (None, ""):
-        return "Not provided by API"
+        return "Not available"
     if isinstance(value, float):
         return f"{value:.2f}{suffix}"
     return f"{value}{suffix}"
@@ -271,7 +285,7 @@ def optional_backend_value(value: Any, suffix: str = "") -> str:
 
 def percent_backend_value(value: Any) -> str:
     if value in (None, ""):
-        return "Not provided by API"
+        return "Not available"
     try:
         return f"{float(value) * 100:.1f}%"
     except (TypeError, ValueError):
@@ -282,10 +296,10 @@ def guardrail_explanation(case: dict[str, Any]) -> str:
     status = case["guardrail_status"]
     action = case["recommended_action"]
     if status == "BLOCKED":
-        return "The backend guardrail status is BLOCKED, so execution is not available."
+        return "This action is blocked by the guardrail, so execution is not available."
     if action == "NO_ACTION":
-        return "The backend recommended NO_ACTION, so no recovery action is available."
-    return "The backend returned a non-blocked guardrail status for the recommended action."
+        return "No recovery action is available for this case."
+    return "This action passed the guardrail check and is available for execution."
 
 
 def is_executable(case: dict[str, Any]) -> bool:
@@ -434,7 +448,7 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
     revenue_reasoning = case.get("revenue_reasoning", {})
     late_payment_probability = case.get("late_payment_probability") or revenue_reasoning.get("late_payment_probability")
     days_overdue = case.get("days_overdue")
-    customer = case.get("customer") or case.get("customer_name") or case.get("customer_id") or "Not provided by API"
+    customer = case.get("customer") or case.get("customer_name") or case.get("customer_id") or "Not available"
 
     with st.container(border=True):
         header_cols = st.columns([0.62, 0.38])
@@ -482,7 +496,7 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
         if st.session_state.latest_execution and st.session_state.latest_execution["decision"]["case_id"] == case["case_id"]:
             execution = st.session_state.latest_execution["execution"]
             st.caption(
-                "Execution response captured: "
+                "Execution status: "
                 f"{execution.get('status', 'status unavailable')} for "
                 f"{execution.get('action', case['recommended_action'])}"
             )
@@ -490,8 +504,7 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
             st.error(st.session_state.latest_execution_error)
 
         if st.button("Back to work queue", use_container_width=True):
-            st.session_state.selected_case_id = None
-            st.session_state.drawer_view = "decision"
+            close_drawer()
             st.rerun()
 
 
@@ -544,8 +557,7 @@ def render_checkout_drawer(case: dict[str, Any]) -> None:
         st.caption("The decision engine determined that an intervention is not currently justified.")
 
         if st.button("Return to work queue", use_container_width=True):
-            st.session_state.selected_case_id = None
-            st.session_state.drawer_view = "decision"
+            close_drawer()
             st.rerun()
 
 
@@ -555,7 +567,7 @@ def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict
     action = str(execution.get("action") or decision.get("recommended_action") or case["recommended_action"])
     status = str(execution.get("status", "Status not provided"))
     simulated = execution.get("simulated")
-    simulated_label = "YES" if simulated is True else "NO" if simulated is False else "Not provided by API"
+    simulated_label = "YES" if simulated is True else "NO" if simulated is False else "Not available"
 
     with st.container(border=True):
         header_cols = st.columns([0.62, 0.38])
@@ -608,8 +620,7 @@ def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict
         action_cols = st.columns(2)
         with action_cols[0]:
             if st.button("Return to work queue", use_container_width=True):
-                st.session_state.selected_case_id = None
-                st.session_state.drawer_view = "decision"
+                close_drawer()
                 st.rerun()
         with action_cols[1]:
             if st.button("View case decision", use_container_width=True):
@@ -646,16 +657,42 @@ def main() -> None:
             border-color: #cbd5e1;
             color: #0f172a;
         }
-        div[data-testid="stSegmentedControl"] button {
-            background: #ffffff;
-            border-color: #cbd5e1;
-            color: #334155;
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
+            background-color: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            color: #334155 !important;
+            -webkit-text-fill-color: #334155 !important;
+            box-shadow: none !important;
         }
-        div[data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-            background: #fff1f2;
-            border-color: #b91c1c;
-            color: #991b1b;
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"]:hover,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"]:focus,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"]:focus-visible {
+            background-color: #f8fafc !important;
+            border-color: #94a3b8 !important;
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a !important;
+            box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.12) !important;
+        }
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"],
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"],
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"]:hover,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"]:hover,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"]:focus,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"]:focus,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"]:focus-visible,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"]:focus-visible {
+            background-color: #fff1f2 !important;
+            border-color: #b91c1c !important;
+            color: #991b1b !important;
+            -webkit-text-fill-color: #991b1b !important;
             font-weight: 700;
+            box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.16) !important;
+        }
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"] > *,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"] p,
+        div[data-testid="stButtonGroup"] button[data-variant="segmented_control"] span {
+            color: inherit !important;
+            -webkit-text-fill-color: inherit !important;
         }
         .stButton button {
             border-radius: 4px;
@@ -669,6 +706,52 @@ def main() -> None:
             color: #ffffff;
             border-color: #b91c1c;
         }
+        .drawer-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 999;
+            background: rgba(15, 23, 42, 0.12);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+            pointer-events: auto;
+        }
+        .st-key-drawer-backdrop-close {
+            position: fixed;
+            inset: 0;
+            z-index: 999;
+            pointer-events: auto;
+        }
+        .st-key-drawer-backdrop-close button {
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: transparent;
+            opacity: 0;
+            cursor: default;
+        }
+        .st-key-case-drawer {
+            position: fixed;
+            top: 0.75rem;
+            right: 0.75rem;
+            bottom: 0.75rem;
+            z-index: 1000;
+            width: min(430px, calc(100vw - 1.5rem));
+            overflow-y: auto;
+            padding: 0.75rem;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+        }
+        @media (max-width: 640px) {
+            .st-key-case-drawer {
+                top: 0.5rem;
+                right: 0.5rem;
+                bottom: 0.5rem;
+                width: calc(100vw - 1rem);
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -679,8 +762,18 @@ def main() -> None:
 
     left, right = st.columns([0.72, 0.28])
     with left:
-        st.title("Revenue Recovery")
-        st.caption("Identify revenue at risk and take the next best recovery action.")
+        title_cols = st.columns([0.84, 0.16])
+        with title_cols[0]:
+            st.title("Revenue Recovery")
+            st.caption("Recovery operations for identifying and acting on revenue at risk")
+        with title_cols[1]:
+            with st.popover("ⓘ Info", use_container_width=True):
+                st.markdown(
+                    "**Revenue at Risk** is the value associated with detected recovery cases; it is not a guaranteed loss or recovery.\n\n"
+                    "**Recovery Probability / Propensity** is the model-estimated likelihood associated with a case, not causal intervention uplift.\n\n"
+                    "**Risk Score** supports case prioritization. **Priority** is the operational priority assigned by the decision system.\n\n"
+                    "**Recommended Action** is the intervention selected by the decision engine. **Guardrail** is the authorization check applied before execution."
+                )
     with right:
         st.caption(format_last_scanned())
         if st.button("Scan for revenue at risk", type="primary", use_container_width=True):
@@ -702,12 +795,10 @@ def main() -> None:
                 st.error(latest_error)
         else:
             st.error("The frontend could not load a recovery queue.")
-        st.info(f"Set `API_BASE_URL` if your FastAPI server is not running at `{API_BASE_URL}`.")
         return
 
     if not cases:
         st.info("No revenue scan has run yet, or the latest work queue is empty.")
-        st.info(f"Backend URL: `{API_BASE_URL}`")
         return
 
     selected_case = find_selected_case()
@@ -715,23 +806,15 @@ def main() -> None:
         "OVERDUE_RECEIVABLE",
         "CHECKOUT_ABANDONMENT",
     }
-    content_area = st.columns([0.64, 0.36], gap="large") if drawer_open else [st.container()]
+    content_area = [st.container()]
 
     with content_area[0]:
-        if drawer_open:
-            st.markdown(
-                "<div style='padding:8px 12px;margin-bottom:10px;background:#f1f5f9;border:1px solid #e2e8f0;color:#64748b;font-size:12px;'>"
-                "Work queue remains visible while the selected O2C case is open."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
         metrics = queue_metrics(cases, payload)
         metric_cols = st.columns(4)
         with metric_cols[0]:
-            render_metric_card("REVENUE AT RISK", format_inr(float(metrics["revenue_at_risk"])), "Calculated from the current queue.")
+            render_metric_card("REVENUE AT RISK", format_inr(float(metrics["revenue_at_risk"])), "Value associated with the current queue.")
         with metric_cols[1]:
-            render_metric_card("CASES DETECTED", str(metrics["cases_detected"]), "Returned by the latest backend scan.")
+            render_metric_card("CASES DETECTED", str(metrics["cases_detected"]), "Cases in the current recovery queue.")
         with metric_cols[2]:
             render_metric_card("HIGH PRIORITY", str(metrics["high_priority"]), "Current queue items marked HIGH.")
         with metric_cols[3]:
@@ -806,11 +889,30 @@ def main() -> None:
                         st.rerun()
 
     if drawer_open and selected_case:
-        with content_area[1]:
+        st.html(
+            """
+            <script>
+            (() => {
+                if (window.__revenueRecoveryDrawerHandlersBound) return;
+                window.__revenueRecoveryDrawerHandlersBound = true;
+                const closeDrawer = () => Array.from(document.querySelectorAll("button")).find(
+                    (button) => ["Back to work queue", "Return to work queue"].includes(button.innerText.trim())
+                )?.click();
+                document.addEventListener("keydown", (event) => {
+                    if (event.key === "Escape") closeDrawer();
+                });
+                document.addEventListener("click", (event) => {
+                    if (event.target.closest(".drawer-backdrop")) closeDrawer();
+                });
+            })();
+            </script>
+            """,
+            unsafe_allow_javascript=True,
+        )
+        render_drawer_backdrop()
+        with st.container(key="case-drawer"):
             execution_payload = st.session_state.latest_execution
-            execution_matches_case = (
-                isinstance(execution_payload, dict)
-            )
+            execution_matches_case = isinstance(execution_payload, dict)
             if execution_matches_case:
                 execution_matches_case = execution_payload.get("decision", {}).get("case_id") == selected_case["case_id"]
             if st.session_state.drawer_view == "execution" and execution_matches_case:
@@ -819,6 +921,33 @@ def main() -> None:
                 render_checkout_drawer(selected_case)
             else:
                 render_o2c_drawer(selected_case)
+    elif drawer_open:
+        st.html(
+            """
+            <script>
+            (() => {
+                if (window.__revenueRecoveryDrawerHandlersBound) return;
+                window.__revenueRecoveryDrawerHandlersBound = true;
+                const closeDrawer = () => Array.from(document.querySelectorAll("button")).find(
+                    (button) => ["Back to work queue", "Return to work queue"].includes(button.innerText.trim())
+                )?.click();
+                document.addEventListener("keydown", (event) => {
+                    if (event.key === "Escape") closeDrawer();
+                });
+                document.addEventListener("click", (event) => {
+                    if (event.target.closest(".drawer-backdrop")) closeDrawer();
+                });
+            })();
+            </script>
+            """,
+            unsafe_allow_javascript=True,
+        )
+        render_drawer_backdrop()
+        with st.container(key="case-drawer"):
+            if st.session_state.latest_error:
+                st.error(st.session_state.latest_error)
+            else:
+                st.info("Loading case details...")
 
     st.markdown(
         (
@@ -830,8 +959,6 @@ def main() -> None:
         ),
         unsafe_allow_html=True,
     )
-
-    st.caption(f"API_BASE_URL: {API_BASE_URL}")
 
 
 if __name__ == "__main__":
