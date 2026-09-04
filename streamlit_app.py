@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import os
-from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -13,7 +12,6 @@ import streamlit as st
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-DETAILS_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 PAGE_SIZE_OPTIONS = [6, 10, 25, 50]
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 CASE_TYPE_LABELS = {
@@ -31,9 +29,6 @@ def init_state() -> None:
     st.session_state.setdefault("drawer_view", "decision")
     st.session_state.setdefault("latest_execution", None)
     st.session_state.setdefault("latest_execution_error", None)
-    st.session_state.setdefault("case_details_loading", False)
-    st.session_state.setdefault("case_details_error", None)
-    st.session_state.setdefault("case_details_future", None)
     st.session_state.setdefault("last_frontend_refresh", None)
     st.session_state.setdefault("queue_page", 1)
     st.session_state.setdefault("queue_page_size", 6)
@@ -146,22 +141,6 @@ def run_scan() -> str | None:
     return None
 
 
-def fetch_case_details() -> tuple[dict[str, Any] | None, str | None]:
-    payload, api_error = api_request("/api/recovery/cases")
-    if api_error:
-        return None, api_error
-    try:
-        return normalize_scan_payload(payload or {}), None
-    except ValueError as exc:
-        return None, str(exc)
-
-
-def start_case_details_load() -> None:
-    st.session_state.case_details_loading = True
-    st.session_state.case_details_error = None
-    st.session_state.case_details_future = DETAILS_EXECUTOR.submit(fetch_case_details)
-
-
 def execute_case(case_id: str) -> str | None:
     payload, api_error = api_request(f"/api/recovery/execute/{case_id}", method="POST")
     if api_error:
@@ -215,9 +194,6 @@ def close_drawer() -> None:
     st.session_state.drawer_view = "decision"
     st.session_state.latest_execution = None
     st.session_state.latest_execution_error = None
-    st.session_state.case_details_loading = False
-    st.session_state.case_details_error = None
-    st.session_state.case_details_future = None
 
 
 def render_drawer_backdrop() -> None:
@@ -476,7 +452,7 @@ def render_queue_table(cases: list[dict[str, Any]]) -> None:
             st.session_state.drawer_view = "decision"
             st.session_state.latest_execution = None
             st.session_state.latest_execution_error = None
-            start_case_details_load()
+            st.rerun()
         st.markdown("<div style='border-bottom:1px solid #e2e8f0;margin:8px 0 6px 0;'></div>", unsafe_allow_html=True)
 
 
@@ -688,43 +664,10 @@ def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict
                 st.rerun()
 
 
-@st.fragment(run_every=0.2)
 def render_case_drawer_content() -> None:
-    if st.session_state.case_details_loading:
-        future: Future[tuple[dict[str, Any] | None, str | None]] | None = st.session_state.case_details_future
-        if future is None:
-            start_case_details_load()
-        elif future.done():
-            try:
-                payload, api_error = future.result()
-            except Exception:
-                payload, api_error = None, "The frontend could not load this case."
-            st.session_state.case_details_future = None
-            if api_error:
-                st.session_state.case_details_loading = False
-                st.session_state.case_details_error = api_error
-            else:
-                st.session_state.latest_payload = payload
-                st.session_state.latest_cases = (payload or {}).get("cases", [])
-                st.session_state.case_details_loading = False
-                st.session_state.case_details_error = None
-            st.rerun()
-
-        st.info("Loading case details…")
-        return
-
     selected_case = find_selected_case()
     if selected_case is None:
-        st.error(st.session_state.case_details_error or "This case could not be loaded.")
-        retry_cols = st.columns(2)
-        with retry_cols[0]:
-            if st.button("Retry loading details", use_container_width=True):
-                start_case_details_load()
-                st.rerun()
-        with retry_cols[1]:
-            if st.button("Return to work queue", use_container_width=True):
-                close_drawer()
-                st.rerun()
+        st.error("This case is no longer available in the current work queue.")
         return
 
     execution_payload = st.session_state.latest_execution
