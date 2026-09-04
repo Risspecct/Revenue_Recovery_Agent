@@ -226,13 +226,33 @@ def scan_revenue_risk(
     unique_cases = {case.case_id: case for case in cases}
     evaluated = [decision_engine.decide(case) for case in unique_cases.values()]
     evaluated.sort(key=lambda result: ({"HIGH": 3, "MEDIUM": 2, "LOW": 1}[result.priority.value], result.revenue_at_risk), reverse=True)
+        # Build a representative bounded queue across available domains.
+    # O2C remains the largest allocation because it has the strongest
+    # monetary signal, while checkout/payment receive dedicated slots
+    # when those sources are available.
+    domain_targets = {
+        CaseType.OVERDUE_RECEIVABLE: int(max_cases * 0.90),
+        CaseType.CHECKOUT_ABANDONMENT: int(max_cases * 0.10),
+        CaseType.PAYMENT_FAILURE: int(max_cases * 0.10),
+    }
+
     selected_ids: set[str] = set()
     queue: list[DecisionResult] = []
-    for case_type in CaseType:
-        representative = next((result for result in evaluated if result.case_type == case_type), None)
-        if representative is not None and len(queue) < max_cases:
-            queue.append(representative)
-            selected_ids.add(representative.case_id)
+
+    # Reserve slots for each available domain.
+    for case_type, target in domain_targets.items():
+        domain_cases = [
+            result for result in evaluated
+            if result.case_type == case_type
+        ]
+
+        for result in domain_cases[:target]:
+            if len(queue) >= max_cases:
+                break
+            queue.append(result)
+            selected_ids.add(result.case_id)
+
+    # Fill any unused slots with the highest-ranked remaining cases.
     queue.extend(
         result
         for result in evaluated
