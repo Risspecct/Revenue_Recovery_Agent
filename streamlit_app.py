@@ -495,6 +495,60 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
             st.rerun()
 
 
+def render_checkout_drawer(case: dict[str, Any]) -> None:
+    with st.container(border=True):
+        header_cols = st.columns([0.62, 0.38])
+        with header_cols[0]:
+            st.markdown("**CHECKOUT ABANDONMENT**")
+            st.markdown(f"`{case['case_id']}`")
+        with header_cols[1]:
+            st.markdown(priority_badge(case["priority"]), unsafe_allow_html=True)
+            st.markdown(f"Revenue at risk: **{format_inr(float(case['revenue_at_risk']))}**")
+
+        if float(case["revenue_at_risk"]) == 0:
+            st.caption("**No monetary value available in source data.**")
+
+        st.divider()
+        st.markdown("**01 - Risk & Propensity Assessment**")
+        risk_cols = st.columns(3)
+        assessment_metrics = (
+            ("Recovery probability", optional_backend_value(case.get("recovery_probability"))),
+            ("Risk score", optional_backend_value(case.get("risk_score"))),
+            ("Priority", optional_backend_value(case.get("priority"))),
+        )
+        for column, (label, value) in zip(risk_cols, assessment_metrics):
+            column.markdown(
+                (
+                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}</div>"
+                    f"<div style='margin-top:6px;font-size:20px;font-weight:700;color:#0f172a;'>{escape(value)}</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("**02 - Why This Case**")
+        st.write(case["reason"])
+
+        st.markdown("**03 - Agent Decision**")
+        st.markdown(f"Recommended action: **{format_action(case['recommended_action']).upper()}**")
+        if "confidence" in case and case["confidence"] is not None:
+            st.markdown(f"Confidence: **{float(case['confidence']) * 100:.0f}%**")
+        st.caption("Decision reason")
+        st.write(case["reason"])
+
+        st.markdown("**04 - Guardrail**")
+        st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
+        st.caption(guardrail_explanation(case))
+
+        st.divider()
+        st.markdown("**NO ACTION REQUIRED**")
+        st.caption("The decision engine determined that an intervention is not currently justified.")
+
+        if st.button("Return to work queue", use_container_width=True):
+            st.session_state.selected_case_id = None
+            st.session_state.drawer_view = "decision"
+            st.rerun()
+
+
 def render_execution_result_drawer(case: dict[str, Any], execution_payload: dict[str, Any]) -> None:
     decision = execution_payload.get("decision", {})
     execution = execution_payload.get("execution", {})
@@ -657,7 +711,10 @@ def main() -> None:
         return
 
     selected_case = find_selected_case()
-    drawer_open = selected_case is not None and selected_case["case_type"] == "OVERDUE_RECEIVABLE"
+    drawer_open = selected_case is not None and selected_case["case_type"] in {
+        "OVERDUE_RECEIVABLE",
+        "CHECKOUT_ABANDONMENT",
+    }
     content_area = st.columns([0.64, 0.36], gap="large") if drawer_open else [st.container()]
 
     with content_area[0]:
@@ -748,9 +805,6 @@ def main() -> None:
                         st.session_state.queue_page += 1
                         st.rerun()
 
-        if selected_case and selected_case["case_type"] != "OVERDUE_RECEIVABLE":
-            st.info(f"Case selected: {selected_case['case_id']}. Detail drawer is available for overdue receivable cases in this step.")
-
     if drawer_open and selected_case:
         with content_area[1]:
             execution_payload = st.session_state.latest_execution
@@ -761,6 +815,8 @@ def main() -> None:
                 execution_matches_case = execution_payload.get("decision", {}).get("case_id") == selected_case["case_id"]
             if st.session_state.drawer_view == "execution" and execution_matches_case:
                 render_execution_result_drawer(selected_case, execution_payload)
+            elif selected_case["case_type"] == "CHECKOUT_ABANDONMENT":
+                render_checkout_drawer(selected_case)
             else:
                 render_o2c_drawer(selected_case)
 
