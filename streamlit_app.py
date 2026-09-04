@@ -384,12 +384,23 @@ def queue_metrics(cases: list[dict[str, Any]], payload: dict[str, Any] | None) -
     }
 
 
-def render_metric_card(label: str, value: str, detail: str = "") -> None:
+def term_help(label: str, explanation: str) -> str:
+    return (
+        f"<span title='{escape(explanation)}' aria-label='{escape(label)} information' "
+        "style='display:inline-block;margin-left:4px;color:#94a3b8;font-size:12px;"
+        "font-weight:700;cursor:help;vertical-align:1px;'>ⓘ</span>"
+    )
+
+
+def render_metric_card(label: str, value: str, detail: str = "", explanation: str | None = None) -> None:
+    label_html = escape(label)
+    if explanation:
+        label_html += term_help(label, explanation)
     st.markdown(
         (
             "<div style='border:1px solid #e2e8f0;background:#ffffff;padding:14px 16px;"
             "box-shadow:0 1px 2px rgba(15,23,42,0.04);height:100%;'>"
-            f"<div style='font-size:11px;font-weight:700;letter-spacing:0.08em;color:#64748b;'>{escape(label)}</div>"
+            f"<div style='font-size:11px;font-weight:700;letter-spacing:0.08em;color:#64748b;'>{label_html}</div>"
             f"<div style='margin-top:10px;font-size:20px;font-weight:700;color:#0f172a;white-space:nowrap;'>{escape(value)}</div>"
             f"<div style='margin-top:6px;font-size:12px;color:#64748b;'>{escape(detail)}</div>"
             "</div>"
@@ -490,14 +501,14 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
         st.markdown("**01 - Risk Assessment**")
         risk_cols = st.columns(3)
         assessment_metrics = (
-            ("Late-payment probability", percent_backend_value(late_payment_probability)),
-            ("Risk score", f"{float(case['risk_score']):.2f}"),
-            ("Priority", case["priority"]),
+            ("Late-payment probability", percent_backend_value(late_payment_probability), "Recovery Probability / Propensity", "Model-estimated likelihood associated with the case; it is not a causal estimate of intervention uplift."),
+            ("Risk score", f"{float(case['risk_score']):.2f}", "Risk Score", "Score used by the system to assess and prioritize the case."),
+            ("Priority", case["priority"], "Priority", "Operational priority assigned to the case."),
         )
-        for column, (label, value) in zip(risk_cols, assessment_metrics):
+        for column, (label, value, help_label, explanation) in zip(risk_cols, assessment_metrics):
             column.markdown(
                 (
-                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}</div>"
+                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}{term_help(help_label, explanation)}</div>"
                     f"<div style='margin-top:6px;font-size:20px;font-weight:700;color:#0f172a;'>{escape(value)}</div>"
                 ),
                 unsafe_allow_html=True,
@@ -507,13 +518,20 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
         st.write(case["reason"])
 
         st.markdown("**03 - Agent Decision**")
-        st.markdown(f"Recommended action: **{format_action(case['recommended_action']).upper()}**")
+        st.markdown(
+            f"Recommended action {term_help('Recommended Action', 'Intervention selected by the decision engine.')}: "
+            f"**{format_action(case['recommended_action']).upper()}**",
+            unsafe_allow_html=True,
+        )
         if "confidence" in case and case["confidence"] is not None:
             st.markdown(f"Confidence: **{float(case['confidence']) * 100:.0f}%**")
         st.caption("Decision reason")
         st.write(case["reason"])
 
-        st.markdown("**04 - Guardrail**")
+        st.markdown(
+            f"**04 - Guardrail** {term_help('Guardrail', 'Authorization check applied before an action can execute.')}",
+            unsafe_allow_html=True,
+        )
         st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
         st.caption(guardrail_explanation(case))
 
@@ -560,14 +578,14 @@ def render_checkout_drawer(case: dict[str, Any]) -> None:
         st.markdown("**01 - Risk & Propensity Assessment**")
         risk_cols = st.columns(3)
         assessment_metrics = (
-            ("Recovery probability", optional_backend_value(case.get("recovery_probability"))),
-            ("Risk score", optional_backend_value(case.get("risk_score"))),
-            ("Priority", optional_backend_value(case.get("priority"))),
+            ("Recovery probability", optional_backend_value(case.get("recovery_probability")), "Recovery Probability / Propensity", "Model-estimated likelihood associated with the case; it is not a causal estimate of intervention uplift."),
+            ("Risk score", optional_backend_value(case.get("risk_score")), "Risk Score", "Score used by the system to assess and prioritize the case."),
+            ("Priority", optional_backend_value(case.get("priority")), "Priority", "Operational priority assigned to the case."),
         )
-        for column, (label, value) in zip(risk_cols, assessment_metrics):
+        for column, (label, value, help_label, explanation) in zip(risk_cols, assessment_metrics):
             column.markdown(
                 (
-                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}</div>"
+                    f"<div style='font-size:12px;font-weight:600;color:#64748b;'>{escape(label)}{term_help(help_label, explanation)}</div>"
                     f"<div style='margin-top:6px;font-size:20px;font-weight:700;color:#0f172a;'>{escape(value)}</div>"
                 ),
                 unsafe_allow_html=True,
@@ -577,13 +595,20 @@ def render_checkout_drawer(case: dict[str, Any]) -> None:
         st.write(case["reason"])
 
         st.markdown("**03 - Agent Decision**")
-        st.markdown(f"Recommended action: **{format_action(case['recommended_action']).upper()}**")
+        st.markdown(
+            f"Recommended action {term_help('Recommended Action', 'Intervention selected by the decision engine.')}: "
+            f"**{format_action(case['recommended_action']).upper()}**",
+            unsafe_allow_html=True,
+        )
         if "confidence" in case and case["confidence"] is not None:
             st.markdown(f"Confidence: **{float(case['confidence']) * 100:.0f}%**")
         st.caption("Decision reason")
         st.write(case["reason"])
 
-        st.markdown("**04 - Guardrail**")
+        st.markdown(
+            f"**04 - Guardrail** {term_help('Guardrail', 'Authorization check applied before an action can execute.')}",
+            unsafe_allow_html=True,
+        )
         st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
         st.caption(guardrail_explanation(case))
 
@@ -848,18 +873,8 @@ def main() -> None:
 
     left, right = st.columns([0.72, 0.28])
     with left:
-        title_cols = st.columns([0.84, 0.16])
-        with title_cols[0]:
-            st.title("Revenue Recovery")
-            st.caption("Recovery operations for identifying and acting on revenue at risk")
-        with title_cols[1]:
-            with st.popover("ⓘ Info", use_container_width=True):
-                st.markdown(
-                    "**Revenue at Risk** is the value associated with detected recovery cases; it is not a guaranteed loss or recovery.\n\n"
-                    "**Recovery Probability / Propensity** is the model-estimated likelihood associated with a case, not causal intervention uplift.\n\n"
-                    "**Risk Score** supports case prioritization. **Priority** is the operational priority assigned by the decision system.\n\n"
-                    "**Recommended Action** is the intervention selected by the decision engine. **Guardrail** is the authorization check applied before execution."
-                )
+        st.title("Revenue Recovery")
+        st.caption("Recovery operations for identifying and acting on revenue at risk")
     with right:
         st.caption(format_last_scanned())
         if st.button("Scan for revenue at risk", type="primary", use_container_width=True):
@@ -894,13 +909,28 @@ def main() -> None:
         metrics = queue_metrics(cases, payload)
         metric_cols = st.columns(4)
         with metric_cols[0]:
-            render_metric_card("REVENUE AT RISK", format_inr(float(metrics["revenue_at_risk"])), "Value associated with the current queue.")
+            render_metric_card(
+                "REVENUE AT RISK",
+                format_inr(float(metrics["revenue_at_risk"])),
+                "Value associated with the current queue.",
+                "Value associated with currently detected recovery cases; it is not a guarantee of loss or recovery.",
+            )
         with metric_cols[1]:
-            render_metric_card("CASES DETECTED", str(metrics["cases_detected"]), "Cases in the current recovery queue.")
+            render_metric_card(
+                "CASES DETECTED",
+                str(metrics["cases_detected"]),
+                "Cases in the current recovery queue.",
+                "Currently detected recovery cases in the queue.",
+            )
         with metric_cols[2]:
             render_metric_card("HIGH PRIORITY", str(metrics["high_priority"]), "Current queue items marked HIGH.")
         with metric_cols[3]:
-            render_metric_card("ACTIONS RECOMMENDED", str(metrics["actions_recommended"]), "Cases with a recommended action other than NO_ACTION.")
+            render_metric_card(
+                "ACTIONS RECOMMENDED",
+                str(metrics["actions_recommended"]),
+                "Cases with a recommended action other than NO_ACTION.",
+                "Cases with a recommended action selected by the decision engine.",
+            )
 
         st.markdown("### Revenue-risk sources")
         st.caption("Where the current recovery queue is coming from.")
