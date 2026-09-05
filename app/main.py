@@ -12,10 +12,13 @@ Endpoints:
 from __future__ import annotations
 
 from fastapi import FastAPI
+from dotenv import load_dotenv
 
 from app.api.models import HealthResponse
 from app.api.routes import recovery
 from app.config.settings import APP_TITLE, APP_VERSION
+
+load_dotenv()
 
 app = FastAPI(
     title=APP_TITLE,
