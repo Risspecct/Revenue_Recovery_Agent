@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.models import EvaluateRequest, EvaluateResponse, ExecuteResponse, ScanResponse
 from app.services.recovery_service import (
+    analyze_cached_case,
     evaluate,
     evaluate_and_execute,
     execute_cached_case,
@@ -168,3 +169,13 @@ def get_batch_recovery_results():
         "measurement_type": "historical_replay",
         "metrics": metrics.to_dict(),
     }
+
+
+@router.get("/analyze/{case_id}")
+def analyze_case(case_id: str):
+    result = analyze_cached_case(case_id)
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Recovery case not found.")
+
+    return result.model_dump()

@@ -29,6 +29,7 @@ def init_state() -> None:
     st.session_state.setdefault("drawer_view", "decision")
     st.session_state.setdefault("latest_execution", None)
     st.session_state.setdefault("latest_execution_error", None)
+    st.session_state.setdefault("latest_analysis", None)
     st.session_state.setdefault("last_frontend_refresh", None)
     st.session_state.setdefault("queue_page", 1)
     st.session_state.setdefault("queue_page_size", 6)
@@ -58,6 +59,48 @@ def api_request(path: str, method: str = "GET") -> tuple[dict[str, Any] | None, 
         return None, "The recovery service returned malformed data."
     except Exception:
         return None, "The frontend could not complete the API request."
+
+
+def analyze_case(case_id: str) -> dict[str, Any] | None:
+    payload, api_error = api_request(f"/api/recovery/analyze/{case_id}")
+
+    if api_error:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    return payload
+
+
+def evaluate_case(case: dict[str, Any]) -> dict[str, Any] | None:
+    endpoint = f"{API_BASE_URL}/api/recovery/evaluate"
+
+    payload = {
+        "case_id": case["case_id"],
+        "case_type": case["case_type"],
+        "customer_id": case.get("customer_id", case["case_id"]),
+        "revenue_at_risk": case["revenue_at_risk"],
+        "recovery_probability": case["recovery_probability"],
+        "context": case.get("context", {}),
+        "available_interventions": case.get("available_interventions", []),
+    }
+
+    req = request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
 
 
 def normalize_scan_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -133,6 +176,7 @@ def run_scan() -> str | None:
 
     st.session_state.latest_payload = normalized
     st.session_state.latest_cases = normalized["cases"]
+    st.session_state.latest_analysis = None
     st.session_state.last_frontend_refresh = datetime.now()
     st.session_state.latest_error = None
     st.session_state.latest_execution = None
@@ -194,6 +238,7 @@ def close_drawer() -> None:
     st.session_state.drawer_view = "decision"
     st.session_state.latest_execution = None
     st.session_state.latest_execution_error = None
+    st.session_state.latest_analysis = None
 
 
 def render_drawer_backdrop() -> None:
@@ -368,6 +413,50 @@ def term_help(label: str, explanation: str) -> str:
     )
 
 
+def render_ai_analyst() -> None:
+    analysis = st.session_state.latest_analysis
+
+    if not analysis:
+        return
+
+    explanation = analysis.get("analyst_explanation")
+    customer_message = analysis.get("customer_message")
+
+    if not explanation and not customer_message:
+        return
+
+    st.markdown("**05 - AI Analyst**")
+
+    if explanation:
+        st.markdown(
+            (
+                "<div style='border:1px solid #e2e8f0;background:#f8fafc;"
+                "padding:12px 14px;margin-top:6px;'>"
+                "<div style='font-size:11px;font-weight:700;letter-spacing:0.06em;"
+                "color:#64748b;'>CASE ANALYSIS</div>"
+                f"<div style='margin-top:6px;font-size:13px;color:#334155;"
+                "line-height:1.5;'>"
+                f"{escape(str(explanation))}"
+                "</div></div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+    if customer_message:
+        st.markdown("**Customer message**")
+        st.markdown(
+            (
+                "<div style='border-left:3px solid #b91c1c;background:#fff7f7;"
+                "padding:10px 12px;font-size:13px;color:#334155;line-height:1.5;'>"
+                f"{escape(str(customer_message))}"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.caption("AI-generated analysis is advisory; the deterministic decision engine and guardrails remain authoritative.")
+
+
 def render_metric_card(label: str, value: str, detail: str = "", explanation: str | None = None) -> None:
     label_html = escape(label)
     if explanation:
@@ -452,6 +541,7 @@ def render_queue_table(cases: list[dict[str, Any]]) -> None:
             st.session_state.drawer_view = "decision"
             st.session_state.latest_execution = None
             st.session_state.latest_execution_error = None
+            st.session_state.latest_analysis = analyze_case(case["case_id"])
             st.rerun()
         st.markdown("<div style='border-bottom:1px solid #e2e8f0;margin:8px 0 6px 0;'></div>", unsafe_allow_html=True)
 
@@ -510,6 +600,8 @@ def render_o2c_drawer(case: dict[str, Any]) -> None:
         )
         st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
         st.caption(guardrail_explanation(case))
+
+        render_ai_analyst()
 
         st.divider()
         if is_executable(case):
@@ -587,6 +679,7 @@ def render_checkout_drawer(case: dict[str, Any]) -> None:
         )
         st.markdown(guardrail_badge(case["guardrail_status"]), unsafe_allow_html=True)
         st.caption(guardrail_explanation(case))
+        render_ai_analyst()
 
         st.divider()
         st.markdown("**NO ACTION REQUIRED**")

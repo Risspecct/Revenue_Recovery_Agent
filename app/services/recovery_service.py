@@ -119,3 +119,12 @@ def execute_cached_case(case_id: str) -> ExecuteResponse | None:
         decision=_to_evaluate_response(decision),
         execution=execution.to_dict(),
     )
+
+
+def analyze_cached_case(case_id: str) -> EvaluateResponse | None:
+    case = get_case(case_id)
+    if case is None:
+        return None
+
+    result = decision_engine.decide(case)
+    return _to_evaluate_response(result)
