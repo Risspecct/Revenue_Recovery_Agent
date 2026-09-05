@@ -1,179 +1,588 @@
-# RazorPay Track 03 — Revenue Recovery Engine
+# Razorpay Revenue Recovery Agent
 
-**Objective:** Detect revenue at risk → determine the right intervention → execute a bounded recovery workflow.
+## Razorpay AI Buildathon — Track 03
 
----
+An AI-assisted revenue recovery agent that detects revenue at risk, determines the right intervention, validates it through guardrails, and executes a bounded recovery workflow across:
 
-## Revenue-Risk Domains
+- Payment failures
+- Checkout abandonment
+- Overdue receivables
 
-| Domain | Risk Signal | Primary Interventions |
-|---|---|---|
-| Payment failures | Failed transaction, retry history | PAYMENT_RETRY, ALTERNATE_PAYMENT_PROMPT, ESCALATE |
-| Checkout abandonment | Abandoned cart + RF propensity score | CHECKOUT_REMINDER, INCENTIVIZED_RECOVERY |
-| Overdue receivables | Days overdue, customer tier, invoice value | INVOICE_REMINDER, ESCALATE |
+> **Detect → Predict → Decide → Explain → Guardrail → Execute → Measure**
 
 ---
 
-## ML Component
+## 1. Problem
 
-A Random Forest classifier (`ml/checkout/artifacts/selected_recovery_model.pkl`) provides checkout recovery propensity scores.
+Revenue leakage rarely occurs at a single point in the payment lifecycle.
 
-- Target: `recovered_within_7d`
-- Features: `cart_additions`, `views`, `unique_products`, `event_count`, `duration_minutes`, `hour_of_day`, `day_of_week`
-- Test ROC-AUC: 0.5954 | Top-10% lift: 1.61×
-- Trained with scikit-learn 1.6.1
+A payment can fail, a customer can abandon checkout, or a B2B invoice can become overdue. Traditional analytics dashboards can surface these problems, while prediction models can estimate risk — but neither necessarily closes the loop.
 
-The score is a **prioritization signal only** — not a causal intervention-lift estimate.
+Our goal is to build a system that moves from **identifying revenue at risk to taking a controlled recovery action**.
+
+The agent therefore answers four questions:
+
+1. **What revenue is at risk?**
+2. **How likely is the case to require recovery?**
+3. **What intervention should be taken?**
+4. **Can that intervention be safely executed?**
 
 ---
 
-## Architecture
+## 2. Solution
 
+The system follows a closed-loop recovery workflow:
+
+```text
+Revenue Signals
+      ↓
+Risk Detection
+      ↓
+ML + Domain Rules
+      ↓
+Decision Engine
+      ↓
+AI Analyst (Gemini)
+      ↓
+Guardrails
+      ↓
+Bounded Executor
+      ↓
+Outcome Measurement
+````
+
+Different revenue-risk sources are normalized into a common `RecoveryCase`.
+
+The Decision Engine evaluates each case using ML signals, domain-specific rules, available interventions, and configured policies.
+
+The resulting decision is then passed to the AI Analyst for explanation and customer-facing communication.
+
+### Core design principle
+
+**ML predicts. Rules decide. Guardrails authorize. The executor acts.**
+
+The LLM is intentionally downstream of financial decisioning. Gemini cannot override the selected action or bypass recovery guardrails.
+
+---
+
+## 3. Revenue-Risk Domains
+
+### Payment Failures
+
+Payment failures are handled using deterministic recovery rules.
+
+Supported interventions include:
+
+* Payment retry
+* Alternate payment prompt
+* Safe fallback / no action
+
+The available payment dataset does not provide suitable recovery-outcome labels for a supervised recovery model, so this domain currently relies on deterministic rules rather than forcing an unsuitable ML model.
+
+### Checkout Abandonment
+
+The checkout pipeline identifies abandoned sessions and uses behavioural signals to estimate recovery propensity.
+
+The model uses features such as:
+
+* Cart additions
+* Product views
+* Unique products
+* Event count
+* Session duration
+* Hour of day
+* Day of week
+
+### Overdue Receivables
+
+The O2C pipeline identifies open receivables and estimates late-payment risk using historical customer and invoice behaviour.
+
+Potential interventions include:
+
+* Invoice reminder
+* Escalation
+* No action
+
+---
+
+## 4. Data Preparation Pipeline
+
+The project includes preparation scripts that transform raw datasets into the structured formats required by the ML models and recovery engine.
+
+Raw source data is kept separate from application-ready datasets.
+
+```text
+Raw Dataset
+     ↓
+Cleaning
+     ↓
+Feature Engineering
+     ↓
+Sessionization / Customer History
+     ↓
+Outcome Construction
+     ↓
+Prepared Dataset
+     ↓
+Model Training / Inference
+     ↓
+Recovery Cases
 ```
-Data / Risk Signals
-    │
-    ▼
-app/decision/engine.py      ← deterministic decision engine
-    │
-    ├── rules.py            ← domain-specific rules (payment / checkout / receivable)
-    ├── guardrails.py       ← safety & business constraints
-    ├── schemas.py          ← RecoveryCase (input), DecisionResult (output)
-    └── _catalogue.py       ← intervention catalogue + configurable thresholds
-    │
-    ▼
-app/models/checkout_recovery.py   ← RF model wrapper
-    │
-    ▼
-app/execution/executor.py   ← bounded action execution (placeholder)
-    │
-    ▼
-app/services/recovery_service.py  ← orchestration (placeholder)
-    │
-    ▼
-app/api/routes/recovery.py  ← FastAPI endpoints (placeholder)
-```
+
+### Checkout pipeline
+
+Raw event-level checkout data is transformed into session-level records.
+
+The preparation process:
+
+* Groups behavioural events into sessions
+* Identifies cart activity
+* Generates behavioural features
+* Identifies abandoned checkout sessions
+* Applies a complete 7-day observation window
+* Reconstructs historical recovery outcomes
+* Produces model-ready data
+
+Historical recovery is defined using a 7-day post-abandonment observation window and the project's transaction-to-session matching logic.
+
+### O2C pipeline
+
+The receivables preparation process:
+
+* Cleans invoice records
+* Normalizes customer and payment attributes
+* Builds historical customer behaviour
+* Prevents future-payment leakage
+* Generates late-payment features
+* Produces model-ready invoice records
+* Feeds open receivables into the recovery scanner
+
+This separation makes the data pipeline reproducible and prevents application logic from depending directly on raw source formats.
 
 ---
 
-## Repository Structure
+## 5. Machine Learning
 
+### Checkout Recovery
+
+The checkout model uses a Random Forest classifier.
+
+Dataset processing produced:
+
+* **2,756,101** events
+* **1,407,580** visitors
+* **1,761,675** sessionized sessions
+* **43,924** cart sessions
+* **30,618** abandoned sessions with a complete 7-day observation window
+* **1,654** historically recovered sessions
+* **5.40%** historical recovery rate
+
+Model performance:
+
+| Metric       | Result |
+| ------------ | -----: |
+| ROC-AUC      | 0.5954 |
+| PR-AUC       | 0.0871 |
+| Top-10% Lift |  1.61× |
+
+The checkout model provides a **recovery propensity / prioritization signal**.
+
+It is deliberately **not presented as a causal estimate of intervention uplift**.
+
+### O2C Late-Payment Risk
+
+The O2C model uses leakage-safe customer history to estimate late-payment risk.
+
+Dataset:
+
+* **48,839** cleaned invoices
+* **9,681** open invoices scored
+
+Model performance:
+
+| Metric  | Result |
+| ------- | -----: |
+| ROC-AUC | 0.8282 |
+| PR-AUC  | 0.7780 |
+
+A validated O2C case produced a late-payment probability of **0.9776**, a risk score of **0.9075**, HIGH priority, and an approved `INVOICE_REMINDER` intervention.
+
+---
+
+## 6. Decision Engine
+
+ML outputs are not directly converted into financial actions.
+
+The Decision Engine combines:
+
+* Case type
+* Revenue at risk
+* Recovery propensity / risk signals
+* Domain-specific rules
+* Available interventions
+* Priority logic
+* Guardrail policies
+
+It produces a structured `DecisionResult` containing:
+
+* Risk score
+* Priority
+* Recommended action
+* Decision reason
+* Confidence
+* Guardrail status
+* Revenue reasoning
+
+Supported actions include:
+
+```text
+PAYMENT_RETRY
+ALTERNATE_PAYMENT_PROMPT
+CHECKOUT_REMINDER
+INCENTIVIZED_RECOVERY
+INVOICE_REMINDER
+ESCALATE
+NO_ACTION
 ```
-razorpay-track03/
+
+This separation allows predictive models to evolve without allowing them to directly control recovery actions.
+
+---
+
+## 7. AI Analyst — Gemini
+
+Google Gemini provides an additional reasoning and communication layer after the deterministic decision has been made.
+
+For a reviewed case, the AI Analyst provides:
+
+* Explanation of why the case matters
+* Explanation of the selected intervention
+* Customer-facing recovery communication
+
+Example flow:
+
+```text
+Recovery Case
+     ↓
+Decision Engine
+     ↓
+Recommended Action
+     ↓
+Gemini Analyst
+     ├── Decision Explanation
+     └── Customer Message
+```
+
+The LLM is **advisory**.
+
+It cannot:
+
+* Change the recommended action
+* Bypass guardrails
+* Authorize an unapproved intervention
+* Claim that revenue has been recovered
+
+---
+
+## 8. Guardrails & Bounded Execution
+
+Before any action can execute, it passes through configured recovery policies.
+
+Examples include:
+
+* Payment retry limits
+* Successful-payment protection
+* Paid-invoice protection
+* Intervention availability checks
+* Checkout eligibility
+* Recovery cooldowns
+* Safe fallbacks
+
+Actions can therefore be:
+
+* **APPROVED**
+* **BLOCKED**
+* **ESCALATED**
+* **NO_ACTION**
+
+The executor only performs actions that are permitted by the decision and guardrail layers.
+
+The current prototype uses **simulated execution**. Execution results are explicitly marked as simulated and are not represented as proof of successful payment or recovered revenue.
+
+---
+
+## 9. Historical Recovery Measurement
+
+The system includes a historical replay mechanism for checkout recovery.
+
+The replay reconstructs the same 7-day recovery target used during model preparation.
+
+Result:
+
+**1,654 recovered sessions / 30,618 observable abandoned sessions = 5.40%**
+
+An important design choice is that the system does **not fabricate monetary recovery**.
+
+The public checkout dataset contains recovery events but does not provide transaction monetary values. Therefore, the system reports historical recovered cases rather than inventing recovered revenue.
+
+Similarly, simulated execution is never counted as actual recovered money.
+
+Where monetary information is available, such as O2C invoice data, revenue-at-risk is measured directly from the source.
+
+---
+
+## 10. Frontend
+
+The Streamlit frontend provides a compact revenue-recovery work queue rather than a traditional analytics dashboard.
+
+It allows an operator to:
+
+* Scan for revenue at risk
+* View prioritized cases
+* Filter and search cases
+* Sort by priority, revenue at risk, or risk score
+* Review case-level risk
+* Inspect the recommended intervention
+* View guardrail status
+* Read the Gemini AI Analyst explanation
+* Review the generated customer message
+* Execute an approved recovery action
+* Inspect the simulated execution result
+
+The interface is designed around the operational recovery workflow rather than historical reporting.
+
+---
+
+## 11. Why This Is Not Just a Prediction Model
+
+A conventional prediction system might answer:
+
+> **"Which customers or transactions are risky?"**
+
+Our system continues beyond prediction:
+
+```text
+Risk
+ ↓
+Decision
+ ↓
+Policy Validation
+ ↓
+Action
+ ↓
+Execution
+ ↓
+Measurement
+```
+
+The ML model is therefore one component of the recovery agent, rather than the entire product.
+
+---
+
+## 12. Why This Is Not Just a Dashboard
+
+A dashboard primarily reports information.
+
+The Revenue Recovery Agent creates a structured recovery case and moves it through an operational workflow:
+
+**Detect → Decide → Explain → Guardrail → Execute**
+
+The Streamlit work queue is the interface to this workflow.
+
+The core product is the **closed-loop recovery system behind the interface**.
+
+---
+
+## 13. Project Structure
+
+```text
+.
 ├── app/
-│   ├── api/routes/recovery.py     ← FastAPI router (placeholder)
-│   ├── config/settings.py         ← Centralized paths and settings
+│   ├── api/
+│   │   ├── models.py
+│   │   └── routes/
+│   │
+│   ├── config/
+│   │   └── settings.py
+│   │
 │   ├── decision/
-│   │   ├── engine.py              ← Orchestrator: decide(case) → DecisionResult
-│   │   ├── rules.py               ← Domain rule functions
-│   │   ├── guardrails.py          ← Safety constraints
-│   │   ├── schemas.py             ← RecoveryCase, DecisionResult, enums
-│   │   └── _catalogue.py          ← Intervention catalogue + thresholds
-│   ├── execution/executor.py      ← Execution layer (placeholder)
-│   ├── models/checkout_recovery.py ← RF model wrapper
-│   ├── services/recovery_service.py ← Service orchestration (placeholder)
-│   └── main.py                    ← FastAPI entry point
-├── data/
-│   ├── raw/checkout/events.csv    ← Session-event log
-│   └── processed/                 ← Generated datasets
+│   │   ├── engine.py
+│   │   ├── schemas.py
+│   │   └── rules/
+│   │
+│   ├── execution/
+│   │   └── executor.py
+│   │
+│   ├── models/
+│   │   ├── checkout_recovery.py
+│   │   └── o2c.py
+│   │
+│   └── services/
+│       ├── revenue_scanner.py
+│       ├── recovery_service.py
+│       ├── batch_recovery.py
+│       └── llm_analyst.py
+│
 ├── ml/
-│   └── checkout/artifacts/
-│       └── selected_recovery_model.pkl
-├── notebooks/
-│   └── exploration/01_checkout_eda.ipynb
+│   ├── checkout/
+│   │   └── artifacts/
+│   │
+│   └── o2c/
+│       └── artifacts/
+│
 ├── scripts/
-│   └── evaluation/example_decisions.py
+│   └── data preparation and ML pipeline scripts
+│
+├── data/
+│   ├── raw/
+│   │   ├── checkout/
+│   │   ├── payment/
+│   │   └── receivables/
+│   │
+│   ├── processed/
+│   │   └── checkout/
+│   │
+│   └── prepared/
+│
 ├── tests/
-│   ├── decision/                  ← Engine + rule + guardrail tests (40 tests)
-│   └── models/                    ← Model smoke tests (5 tests)
-├── .env.example
+│
+├── streamlit_app.py
 ├── requirements.txt
-├── run.py
 └── README.md
 ```
 
 ---
 
-## Installation
+## 14. API
+
+Key recovery endpoints:
+
+```text
+GET  /health
+
+POST /api/recovery/evaluate
+
+POST /api/recovery/execute
+
+POST /api/recovery/scan
+
+GET  /api/recovery/cases
+
+POST /api/recovery/execute/{case_id}
+
+GET  /api/recovery/batch-results
+
+GET  /api/recovery/analyze/{case_id}
+```
+
+---
+
+## 15. Technology Stack
+
+| Layer           | Technology      |
+| --------------- | --------------- |
+| Backend         | Python, FastAPI |
+| Frontend        | Streamlit       |
+| ML              | scikit-learn    |
+| Data Processing | pandas, NumPy   |
+| Model Artifacts | joblib          |
+| AI Analyst      | Google Gemini   |
+| Testing         | pytest          |
+
+---
+
+## 16. Running Locally
+
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If the scikit-learn version conflict causes model-loading warnings, the engine
-falls back gracefully to the manually supplied `recovery_probability`.
+### Configure Gemini
 
----
+Create a `.env` file:
 
-## Running the Application
+```env
+GEMINI_API_KEY=your_key_here
+```
+
+### Start the backend
 
 ```bash
-# Development server
 uvicorn app.main:app --reload
-
-# Or via run.py
-python run.py
 ```
 
-Health check: `GET http://localhost:8000/health`  
-API docs: `http://localhost:8000/docs`
+### Start the frontend
 
----
-
-## Running Tests
+In another terminal:
 
 ```bash
-python -m pytest tests/ -v
+streamlit run streamlit_app.py
 ```
 
 ---
 
-## Using the Decision Engine Directly
+## 17. Demo Flow
 
-```python
-from app.decision.schemas import CaseType, RecoveryCase
-from app.decision.engine import decide
+The intended demonstration follows the complete recovery lifecycle:
 
-case = RecoveryCase(
-    case_id="checkout_12345",
-    case_type=CaseType.CHECKOUT_ABANDONMENT,
-    customer_id="cust_9981",
-    revenue_at_risk=850.0,
-    recovery_probability=0.72,
-    context={
-        "cart_additions": 3, "views": 12, "unique_products": 4,
-        "event_count": 25, "duration_minutes": 8.5,
-        "hour_of_day": 14, "day_of_week": 2,
-    },
-)
-
-result = decide(case)
-print(result.to_dict())
+```text
+Scan for Revenue at Risk
+          ↓
+Prioritized Work Queue
+          ↓
+Review Case
+          ↓
+Risk Assessment
+          ↓
+Agent Decision
+          ↓
+AI Analyst Explanation
+          ↓
+Guardrail Verification
+          ↓
+Execute Recovery Action
+          ↓
+Execution Result
+          ↓
+Historical Recovery Measurement
 ```
 
-See `scripts/evaluation/example_decisions.py` for more examples.
+---
+
+## 18. Design Principles
+
+### ML predicts; deterministic policy decides
+
+Predictive models provide risk signals. Business rules determine what intervention is appropriate.
+
+### LLM explains; it does not authorize
+
+Gemini provides contextual reasoning and customer communication without controlling financial actions.
+
+### Guardrails come before execution
+
+Every action must pass configured recovery policies.
+
+### Execution is bounded
+
+The executor can only perform actions represented by the approved recovery action catalogue.
+
+### Measurement is evidence-based
+
+Predictions and simulated executions are never presented as guaranteed or realized revenue recovery.
+
+### Data limitations are explicit
+
+When source data does not contain monetary outcomes, the system reports the limitation rather than manufacturing a financial metric.
 
 ---
 
-## ML Artifacts
+## Core Objective
 
-| Artifact | Location |
-|---|---|
-| `selected_recovery_model.pkl` | `ml/checkout/artifacts/` |
-| `baseline_recovery_model.pkl` | `ml/checkout/artifacts/` (future) |
-| `feature_scaler.pkl` | `ml/checkout/artifacts/` (future) |
+Build an agent that **detects revenue at risk, determines the right intervention, and executes a bounded recovery workflow** across payment failures, checkout abandonment, and overdue receivables.
 
----
+The objective is not merely to predict revenue loss.
 
-## Configurable Thresholds
-
-All decision thresholds live in `app/decision/_catalogue.py → THRESHOLDS`.
-Edit there to tune without touching rule logic.
-
----
-
-## Assumptions & Limitations
-
-- The RF model was serialized with sklearn 1.6.1; a version-mismatch warning may appear under newer sklearn. The loader suppresses this and falls back gracefully.
-- The engine is stateless. Cooldown/deduplication state must be supplied by the caller via `case.context`.
-- No causal intervention data exists. `recovery_probability` is a propensity signal only.
-- FastAPI endpoints, execution layer, and service orchestration are placeholder stubs awaiting the next development phase.
+It is to **close the loop from revenue-risk detection to controlled recovery action and measurable outcome**.
