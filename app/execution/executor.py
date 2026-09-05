@@ -42,13 +42,13 @@ from app.decision.schemas import (
 # ---------------------------------------------------------------------------
 
 _ACTION_MESSAGES: dict[Intervention, str] = {
-    Intervention.PAYMENT_RETRY:            "Payment retry initiated.",
+    Intervention.PAYMENT_RETRY: "Payment retry initiated.",
     Intervention.ALTERNATE_PAYMENT_PROMPT: "Alternate payment method flow initiated.",
-    Intervention.CHECKOUT_REMINDER:        "Checkout recovery reminder queued.",
-    Intervention.INCENTIVIZED_RECOVERY:    "Eligible recovery incentive issued.",
-    Intervention.INVOICE_REMINDER:         "Invoice reminder queued.",
-    Intervention.ESCALATE:                 "Recovery case escalated for manual review.",
-    Intervention.NO_ACTION:                "No recovery action taken.",
+    Intervention.CHECKOUT_REMINDER: "Checkout recovery reminder queued.",
+    Intervention.INCENTIVIZED_RECOVERY: "Eligible recovery incentive issued.",
+    Intervention.INVOICE_REMINDER: "Invoice reminder queued.",
+    Intervention.ESCALATE: "Recovery case escalated for manual review.",
+    Intervention.NO_ACTION: "No recovery action taken.",
 }
 
 

@@ -43,7 +43,7 @@ from app.decision.schemas import (
     Priority,
     RecoveryCase,
 )
-from app.decision._catalogue import CATALOGUE, THRESHOLDS
+from app.decision._catalogue import THRESHOLDS
 from app.decision.guardrails import validate_decision
 from app.decision import rules
 
@@ -80,6 +80,7 @@ def _compute_risk_score(
 # ---------------------------------------------------------------------------
 # Revenue reasoning
 # ---------------------------------------------------------------------------
+
 
 def _revenue_reasoning(
     recovery_probability: float,
@@ -203,7 +204,7 @@ def decide(
     # decide_checkout returns a 4-tuple (action, reason, confidence, prob).
     # All other rule functions return a 3-tuple; recovery_probability stays
     # at the case value (0.0 when no upstream model exists for that domain).
-        # --- Route to domain rule module --------------------------------------
+    # --- Route to domain rule module --------------------------------------
     if case.case_type == CaseType.PAYMENT_FAILURE:
         action, reason, confidence = rules.decide_payment(case)
         effective_prob = case.recovery_probability
@@ -234,12 +235,12 @@ def decide(
     # --- available_interventions whitelist --------------------------------
     if case.available_interventions and action not in case.available_interventions:
         blocked_name = action.value          # capture before overwriting
-        action       = Intervention.NO_ACTION
-        reason       = (
+        action = Intervention.NO_ACTION
+        reason = (
             f"Preferred action {blocked_name} is not in the case's "
             "available_interventions whitelist."
         )
-        confidence   = 0.50
+        confidence = 0.50
 
     # --- Guardrails + fallback resolution --------------------------------
     action, reason, confidence, guardrail_status = _resolve_action(
