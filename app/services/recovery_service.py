@@ -19,6 +19,7 @@ from app.decision import engine as decision_engine
 from app.decision.schemas import DecisionResult, RecoveryCase
 from app.execution.executor import execute
 from app.services.revenue_scanner import get_case
+from app.services.llm_analyst import analyze_decision
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,8 @@ def _build_case(request: EvaluateRequest) -> RecoveryCase:
 # ---------------------------------------------------------------------------
 
 def _to_evaluate_response(result: DecisionResult) -> EvaluateResponse:
+    analyst = analyze_decision(result)
+
     return EvaluateResponse(
         case_id              = result.case_id,
         case_type            = result.case_type.value,
@@ -54,6 +57,8 @@ def _to_evaluate_response(result: DecisionResult) -> EvaluateResponse:
         confidence           = result.confidence,
         guardrail_status     = result.guardrail_status.value,
         revenue_reasoning    = result.revenue_reasoning,
+        analyst_explanation  = analyst["explanation"],
+        customer_message     = analyst["customer_message"],
     )
 
 

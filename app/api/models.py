@@ -105,6 +105,8 @@ class EvaluateResponse(BaseModel):
     revenue_reasoning:    dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"use_enum_values": True}
+    analyst_explanation: str = ""
+    customer_message: str = ""
 
 
 class ExecuteResponse(BaseModel):
